@@ -101,6 +101,9 @@ python -m venv .venv
 OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…）全部排除，因此体积与启动时间都很小（冷启动约 1 秒）。
 `tests/test_packaging.py` 会守住这条底线：一旦导入图里出现重型依赖，测试直接失败。
 
+发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
+再把 `dist\SCTranslator-v0.1.0-win64.zip` 拖进 Release 附件区即可。
+
 ## 配置与数据
 
 | 路径 | 说明 |
