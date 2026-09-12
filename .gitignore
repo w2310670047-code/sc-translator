@@ -1,3 +1,4 @@
+# Runtime / cache
 .venv/
 __pycache__/
 *.pyc
@@ -9,5 +10,10 @@ logs/
 *.log
 tools/_out/
 
-# DSH AgentTeams 运行态（不发布）
+# DSH AgentTeams runtime state (not published)
 .agent-teams/
+
+# One-shot credential files: never commit
+.gh_token
+*.token
+tokens.txt
