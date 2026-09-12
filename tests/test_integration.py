@@ -206,6 +206,67 @@ def test_reply_click_copies_and_uses_spicy(qapp, tmp_home):
     ctrl.shutdown()
 
 
+def test_gamecode_card_encode_decode(qapp, tmp_home):
+    """游戏聊天码卡片：输入中文即时编码、点按复制、粘码可解码。"""
+    from PySide6.QtWidgets import QApplication
+
+    from sc_translator import gamecode
+
+    ini = tmp_home / "global.ini"
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text(
+        "_starcitizen_doctor_localization_community_input_method_version=1.2.3\n"
+        "IH=你\nE8=好\nAP=吗\n100=测\n"
+        "_starcitizen_doctor_localization_version=4.2.0\n",
+        encoding="utf-8",
+    )
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(ini))
+    win = ctrl.mainwin
+    assert gamecode.configured(), "启动时应自动载入码表"
+    assert "码表就绪" in win._gc_state.text(), win._gc_state.text()
+    assert "1.2.3" in win._gc_state.text(), win._gc_state.text()
+
+    # 输入即时编码
+    win._gc_in.setPlainText("你好吗")
+    _pump(qapp)
+    assert win._gc_out.toPlainText() == "[zh] @IH@E8@AP"
+
+    # 点按编码并复制
+    QApplication.clipboard().setText("")
+    win._gc_autocopy.setChecked(False)   # 关掉防抖，避免干扰本次断言
+    win._btn_gc_encode.click()
+    _pump(qapp)
+    assert QApplication.clipboard().text() == "[zh] @IH@E8@AP"
+
+    # 反向：粘别人的码 -> 解码成中文（@100=测）
+    win._gc_out.setPlainText("[zh] @100@IH@E8")
+    win._btn_gc_decode.click()
+    _pump(qapp)
+    assert win._gc_in.toPlainText() == "测你好"
+    assert "已解码" in win._status.text(), win._status.text()
+    ctrl.shutdown()
+
+
+def test_gamecode_without_table_shows_hint(qapp, tmp_home, monkeypatch):
+    """没装汉化时：状态栏给出明确指引，点按钮不崩、只提示。"""
+    from sc_translator import gamecode
+    from PySide6.QtWidgets import QMessageBox
+
+    # 屏蔽自动检测，模拟"本机没有码表"
+    monkeypatch.setattr(gamecode, "autodetect", lambda roots=None: None, raising=False)
+    monkeypatch.setenv("SC_GAMECODE_INI", "")
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path="")
+    win = ctrl.mainwin
+    assert not gamecode.configured()
+    assert "未找到码表" in win._gc_state.text(), win._gc_state.text()
+    win._gc_in.setPlainText("你好吗")
+    win._btn_gc_encode.click()
+    _pump(qapp)
+    assert win._gc_out.toPlainText() == "", "没有码表时不应产生输出"
+    ctrl.shutdown()
+
+
 def test_spicy_checkbox_persists_to_settings(qapp, tmp_home):
     """嘴臭模式：主窗口复选框与设置项双向一致并落盘。"""
     from sc_translator.settings import Settings

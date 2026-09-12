@@ -1,4 +1,4 @@
-# Star Citizen 翻译器 (SC Translator)
+﻿# Star Citizen 翻译器 (SC Translator)
 
 面向《星际公民》玩家的 **双向文字翻译器**（Windows 桌面程序，纯文本输入输出）：
 
@@ -42,6 +42,7 @@ SCTranslator\
 ## 功能一览
 
 - 双向翻译：外文 → 中文；中文 → English / Japanese / Korean（自动复制）
+- **游戏聊天码**：中文 ↔ 游戏内 `@码`（`你好吗` → `[zh] @IH@E8@AP`），让游戏聊天里也能发中文
 - 术语表预替换：1200+ 条官方中英对照（地名 / 载具 / 物品 / 组织），可自行增删
 - 嘴臭模式开关（提示词切换，正常 ⇄ 嘴臭两套，用户可编辑）
 - 翻译缓存 + 多行批量请求 + `Ctrl+Enter` 快捷键，重复文本不重复计费
@@ -49,6 +50,31 @@ SCTranslator\
   主窗口「日志」按钮直达；`data\logs\exchange.log` 记录每次「输入 → 模型输出」（便于排查空内容与乱码）
 - API Key 用 Windows DPAPI 加密，仅当前用户本机可解密
 - 深浅两套主题；单实例锁；便携目录结构
+
+## 游戏聊天码（把中文送进游戏聊天）
+
+星际公民聊天框打不了中文，但游戏**本地化语法 `@KEY` 会展开成该键的值**。
+社区做法是把 7020 个常用汉字注册成 `global.ini` 里的本地化键（键名 = 汉字序号转 base36），
+聊天里只发 `@IH@E8@AP`，客户端就会渲染成「你好吗」。本工具实现了这条路：
+
+- **编码**：左侧输入中文 → 即时得到 `[zh] @IH@E8@AP` → 自动进剪贴板 → 游戏内 `Ctrl+V` 发送
+- **解码**：别人发来的 `[zh] @…` 粘到右侧 → **解码为中文**（社区原工具没有反向功能）
+- 码表来源：自动检测本机**已装汉化**的 `global.ini`（`…\StarCitizen\LIVE\data\Localization\chinese_(simplified)\global.ini`），
+  也可以手动点「浏览…」指定；状态栏会显示码表字数与版本
+- 路径会写回 `data\settings.json` 的 `gamecode_ini_path`，之后启动不再扫盘（首次检测约 0.1 秒）
+
+> **前提**：必须安装带「社区输入法支持」的汉化包（SC 汉化盒子安装汉化时勾选，
+> 或社区输入法数据已写入你的 `global.ini`）；没装时本功能显示提示但不影响翻译主功能。
+
+实现细节（`sc_translator/gamecode.py`）：
+
+| 规则 | 说明 |
+| --- | --- |
+| 码表块 | `global.ini` 里 `_…_community_input_method_version=` 与 `_…_localization_version=` 之间的 `码=汉字` 行 |
+| 码 | 汉字在码表中的序号转 base36（`0-9A-Z`，最少两位），如 `IH`=665=你、`E8`=512=好、`AP`=385=吗 |
+| ASCII/标点 | 原样直通，与码之间补一个空格（`Pyro 见 @Bob` → `[zh] Pyro @31 @Bob`） |
+| 未覆盖的字 | 丢成一个空格（与原实现一致） |
+| 解码防误伤 | 严格按编码器不变式判定：码后必接空格，所以 `@Bob` 这类玩家名不会被拆成码 |
 
 ## 提示词文件（可自行编辑）
 
@@ -102,7 +128,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 会守住这条底线：一旦导入图里出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.1.0-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.2.0-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 

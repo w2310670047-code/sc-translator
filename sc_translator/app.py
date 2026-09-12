@@ -46,6 +46,8 @@ class AppController:
 
         # 术语表（专名预替换）
         self.apply_glossary()
+        # 游戏聊天码表（中文 -> 游戏内 @码）
+        self.apply_gamecode()
         # 静态UI词典（默认关闭，保留接口）
         self.apply_dict()
 
@@ -138,6 +140,34 @@ class AppController:
                 log.info("SC 术语表就绪：%d 词条", len(glossary._terms))
         except Exception as exc:  # noqa: BLE001
             log.warning("术语表加载失败（忽略）: %s", exc)
+
+    # ------------------------------------------------------- 游戏聊天码
+    def apply_gamecode(self) -> None:
+        """加载/重载游戏聊天码表（中文 -> 游戏内 @码）。
+
+        码表来自本机已装汉化的 global.ini（设置里可手动指定，留空自动检测）；
+        没有装汉化时该功能不可用，但不影响翻译主功能。
+        """
+        try:
+            from . import gamecode
+
+            path = gamecode.resolve_path(self.settings.gamecode_ini_path)
+            if path is None:
+                gamecode.clear()
+                log.info("未找到带社区输入法码表的 global.ini，游戏聊天码功能未启用")
+                return
+            n = gamecode.load_global_ini(path)
+            if not self.settings.gamecode_ini_path:
+                # 首次自动检测到的路径写回设置，之后启动不再扫盘
+                self.settings.gamecode_ini_path = str(path)
+                try:
+                    self.settings.save()
+                except Exception:  # noqa: BLE001
+                    pass
+            if n:
+                log.info("游戏聊天码就绪：%d 字（版本 %s）", n, gamecode.version())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("游戏聊天码表加载失败（忽略）: %s", exc)
 
     # ------------------------------------------------------- 主题
     def apply_theme(self, theme: str) -> None:

@@ -42,7 +42,7 @@ class MainWindow(QMainWindow):
         self.app = app
         s = app.settings
         self.setWindowTitle(f"{APP_DISPLAY_NAME} v{__version__}（文字翻译）")
-        self.resize(860, 640)
+        self.resize(980, 880)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -191,9 +191,228 @@ class MainWindow(QMainWindow):
         mid.addWidget(card2, 1)
         root.addLayout(mid, 1)
 
+        # ---------------- 游戏聊天码（中文 -> 游戏内 @码）----------------
+        gc_card, gc = make_card("游戏聊天码：把中文送进游戏聊天（需已装带社区输入法支持的汉化）")
+        prow = QHBoxLayout()
+        prow.addWidget(QLabel("汉化 global.ini"))
+        self._gc_path = QLineEdit()
+        self._gc_path.setPlaceholderText("留空 = 自动检测已安装的汉化")
+        self._gc_path.editingFinished.connect(self._on_gc_path_edited)
+        prow.addWidget(self._gc_path, 1)
+        self._btn_gc_detect = QPushButton("自动检测")
+        self._btn_gc_detect.clicked.connect(self._detect_gamecode)
+        prow.addWidget(self._btn_gc_detect)
+        self._btn_gc_browse = QPushButton("浏览…")
+        self._btn_gc_browse.clicked.connect(self._browse_gamecode)
+        prow.addWidget(self._btn_gc_browse)
+        gc.addLayout(prow)
+
+        self._gc_state = QLabel("…")
+        self._gc_state.setObjectName("hint")
+        gc.addWidget(self._gc_state)
+
+        gcbox = QHBoxLayout()
+        left = QVBoxLayout()
+        left.addWidget(QLabel("中文（输入即时编码）"))
+        self._gc_in = QPlainTextEdit()
+        self._gc_in.setPlaceholderText("你好吗")
+        self._gc_in.setMinimumHeight(70)
+        self._gc_in.textChanged.connect(self._on_gc_text)
+        left.addWidget(self._gc_in)
+        lrow = QHBoxLayout()
+        self._btn_gc_encode = QPushButton("编码并复制")
+        self._btn_gc_encode.clicked.connect(lambda: self._gc_do("encode"))
+        lrow.addWidget(self._btn_gc_encode)
+        self._gc_autocopy = QCheckBox("自动复制")
+        self._gc_autocopy.setChecked(bool(self.app.settings.gamecode_auto_copy))
+        self._gc_autocopy.toggled.connect(self._on_gc_autocopy)
+        lrow.addWidget(self._gc_autocopy)
+        lrow.addStretch(1)
+        left.addLayout(lrow)
+        gcbox.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        right.addWidget(QLabel("游戏码 / 结果（可粘贴别人的 [zh] 消息后解码）"))
+        self._gc_out = QPlainTextEdit()
+        self._gc_out.setMinimumHeight(70)
+        self._gc_out.setPlaceholderText("[zh] @IH@E8@AP")
+        self._gc_out.textChanged.connect(self._on_gc_out_text)
+        right.addWidget(self._gc_out)
+        rrow = QHBoxLayout()
+        self._btn_gc_decode = QPushButton("解码为中文")
+        self._btn_gc_decode.clicked.connect(lambda: self._gc_do("decode"))
+        rrow.addWidget(self._btn_gc_decode)
+        self._btn_gc_copy = QPushButton("复制结果")
+        self._btn_gc_copy.clicked.connect(self._copy_gc_out)
+        rrow.addWidget(self._btn_gc_copy)
+        rrow.addStretch(1)
+        right.addLayout(rrow)
+        gcbox.addLayout(right, 1)
+        gc.addLayout(gcbox)
+        root.addWidget(gc_card)
+
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._translate_to_zh)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self._translate_to_zh)
         self._busy = False
+        self._gc_timer = None
+        self._gc_syncing = False
+        self._refresh_gamecode_state()
+
+    # ---------------- 游戏聊天码 ----------------
+    def _gc_source_text(self) -> str:
+        """编码方向取左侧中文框；若为空则取右侧（便于只粘贴一条码去解码）。"""
+        return self._gc_in.toPlainText()
+
+    def _on_gc_autocopy(self, on: bool) -> None:
+        self.app.settings.gamecode_auto_copy = bool(on)
+        self.app.settings.save()
+
+    def _refresh_gamecode_state(self) -> None:
+        from .. import gamecode
+
+        self._gc_path.setText(self.app.settings.gamecode_ini_path or "")
+        st = gamecode.status()
+        if st["ready"]:
+            self._gc_state.setText(
+                f"码表就绪：{st['size']} 字"
+                + (f" · 版本 {st['version']}" if st["version"] else "")
+                + f" · 来源 {st['source']}"
+            )
+            self._gc_state.setStyleSheet("")
+        else:
+            self._gc_state.setText(
+                "未找到码表：请先安装带“社区输入法支持”的汉化，或点“浏览…”选择游戏目录下的 "
+                "…\\Localization\\chinese_(simplified)\\global.ini"
+            )
+            self._gc_state.setStyleSheet("color:#f5b83d;")
+
+    def _detect_gamecode(self) -> None:
+        from .. import gamecode
+
+        path = gamecode.autodetect()
+        if path is None:
+            QMessageBox.warning(
+                self,
+                "未找到码表",
+                "没有在本机找到带社区输入法码表的 global.ini。\n"
+                "请先在 SC 汉化盒子里安装带“社区输入法支持”的汉化，或手动选择文件。",
+            )
+            return
+        self._load_gamecode_path(str(path))
+
+    def _browse_gamecode(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+
+        start = self.app.settings.gamecode_ini_path or ""
+        path, _ = QFileDialog.getOpenFileName(self, "选择汉化后的 global.ini", start, "INI 文件 (*.ini);;所有文件 (*)")
+        if path:
+            self._load_gamecode_path(path)
+
+    def _on_gc_path_edited(self) -> None:
+        self._load_gamecode_path(self._gc_path.text().strip())
+
+    def _load_gamecode_path(self, path: str) -> None:
+        from .. import gamecode
+
+        self.app.settings.gamecode_ini_path = path
+        self.app.settings.save()
+        try:
+            n = gamecode.load_global_ini(path) if path else 0
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "码表加载失败", str(exc))
+            self.app.apply_gamecode()
+        else:
+            if not n and path:
+                QMessageBox.warning(self, "码表为空", "该文件里没有社区输入法码表块。")
+                self.app.apply_gamecode()
+            self._set_status(f"游戏码表已加载：{n} 字")
+        self._refresh_gamecode_state()
+
+    def _on_gc_text(self) -> None:
+        """中文框输入即时编码（与原社区工具一致），并做 0.8 秒防抖自动复制。"""
+        if self._gc_syncing:
+            return
+        from .. import gamecode
+
+        if not gamecode.configured():
+            return
+        text = self._gc_in.toPlainText()
+        try:
+            enc = gamecode.encode(text) if text.strip() else ""
+        except Exception as exc:  # noqa: BLE001
+            log.warning("编码失败: %s", exc)
+            return
+        self._gc_syncing = True
+        try:
+            self._gc_out.setPlainText(enc)
+        finally:
+            self._gc_syncing = False
+        self._gc_schedule_copy(enc)
+
+    def _on_gc_out_text(self) -> None:
+        """右侧被粘贴内容后，也做一次防抖自动复制（解码结果由按钮写入左侧）。"""
+        if self._gc_syncing:
+            return
+        self._gc_schedule_copy(self._gc_out.toPlainText())
+
+    def _gc_schedule_copy(self, text: str) -> None:
+        from PySide6.QtCore import QTimer
+
+        if not self._gc_autocopy.isChecked() or not text.strip():
+            return
+        if self._gc_timer is not None:
+            self._gc_timer.stop()
+        self._gc_timer = QTimer(self)
+        self._gc_timer.setSingleShot(True)
+        self._gc_timer.timeout.connect(lambda: self._copy_text(text, "游戏码已复制"))
+        self._gc_timer.start(800)
+
+    def _gc_do(self, mode: str) -> None:
+        from .. import gamecode
+
+        if not gamecode.configured():
+            QMessageBox.information(
+                self,
+                "提示",
+                "游戏码表未加载。\n请先安装带“社区输入法支持”的汉化，或点“自动检测 / 浏览…”指定 global.ini。",
+            )
+            return
+        try:
+            if mode == "encode":
+                out = gamecode.encode(self._gc_in.toPlainText())
+                self._gc_syncing = True
+                try:
+                    self._gc_out.setPlainText(out)
+                finally:
+                    self._gc_syncing = False
+                if not out:
+                    self._set_status("没有可编码的中文")
+                    return
+                self._copy_text(out, "已复制游戏码，进游戏 Ctrl+V 发送")
+            else:
+                raw = self._gc_out.toPlainText()
+                if not raw.strip():
+                    self._set_status("请先在右侧粘贴 [zh] 开头的游戏码消息")
+                    return
+                out = gamecode.decode(raw)
+                self._gc_syncing = True
+                try:
+                    self._gc_in.setPlainText(out)
+                finally:
+                    self._gc_syncing = False
+                tip = "已解码" if gamecode.has_zh_marker(raw) else "已解码（未检测到 [zh] 前缀，结果可能不准）"
+                self._set_status(tip)
+        except Exception as exc:  # noqa: BLE001
+            self._show_fail(exc)
+
+    def _copy_text(self, text: str, tip: str) -> None:
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(text)
+        self._set_status(tip)
+
+    def _copy_gc_out(self) -> None:
+        self._copy_text(self._gc_out.toPlainText(), "已复制游戏码")
 
     # ---------------- API ----------------
     def _on_provider_changed(self, name: str) -> None:

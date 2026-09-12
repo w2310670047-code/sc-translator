@@ -74,6 +74,9 @@ class Settings:
     reply_enabled: bool = False
     reply_target: str = "English"      # English / Japanese / Korean
     auto_copy_reply: bool = True
+    # ---- 游戏聊天码（中文 -> 游戏内 @码，需装带社区输入法支持的汉化）----
+    gamecode_ini_path: str = ""        # 汉化后的 global.ini；留空自动检测
+    gamecode_auto_copy: bool = True    # 编码结果自动进剪贴板（便于游戏内 Ctrl+V）
     # ---- 界面 ----
     theme: str = "dark"
     log_level: str = "INFO"

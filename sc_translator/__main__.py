@@ -160,6 +160,21 @@ def _doctor(online: bool) -> int:
 
     step("术语表", _glossary)
 
+    def _gamecode():
+        from . import gamecode
+        from .settings import Settings
+
+        path = gamecode.resolve_path(Settings().load().gamecode_ini_path)
+        if path is None:
+            return "未检测到带社区输入法码表的汉化：游戏聊天码不可用（不影响翻译等其它功能）"
+        n = gamecode.load_global_ini(path)
+        return (
+            f"{n} 字，版本 {gamecode.version() or '未知'}，来源 {path}；"
+            f"示例 你好吗 -> {gamecode.encode('你好吗')}"
+        )
+
+    step("游戏聊天码", _gamecode)
+
     if online:
 
         def _api():

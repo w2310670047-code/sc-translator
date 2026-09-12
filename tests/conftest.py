@@ -33,12 +33,14 @@ def _isolate_runtime_home(tmp_path, monkeypatch):
     同时重置日志器与全局词典/术语表状态，保证互不串扰（修复复核 F1）。
     """
     monkeypatch.setenv("SC_TRANSLATOR_HOME", str(tmp_path / "isolated_home"))
-    from sc_translator import exchange_log, gamedict, glossary
+    from sc_translator import exchange_log, gamecode, gamedict, glossary
 
     exchange_log.reset()
     gamedict.clear()
     glossary.clear()
+    gamecode.clear()
     yield
     exchange_log.reset()
     gamedict.clear()
     glossary.clear()
+    gamecode.clear()
