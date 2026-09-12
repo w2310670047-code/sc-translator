@@ -27,13 +27,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_DISPLAY_NAME, __version__
+from .. import __version__
+from .. import i18n
+from ..i18n import t
 from ..paths import logs_dir
+from ..settings import PROVIDER_PRESETS
 from .widgets import KeyLine, make_card
 
 log = logging.getLogger(__name__)
 
-PROVIDERS = ["DeepSeek", "OpenAI", "自定义 OpenAI 兼容"]
+# 服务商：key 稳定（存设置），显示名走 i18n
+PROVIDERS = list(PROVIDER_PRESETS)
+
+
+def provider_choices() -> list[tuple[str, str]]:
+    """服务商下拉项 [(稳定key, 本地化显示名)]。"""
+    out = []
+    for key in PROVIDERS:
+        out.append((key, t("provider.custom") if key == "custom" else key))
+    return out
 
 
 class MainWindow(QMainWindow):
@@ -41,7 +53,7 @@ class MainWindow(QMainWindow):
         super().__init__(None)
         self.app = app
         s = app.settings
-        self.setWindowTitle(f"{APP_DISPLAY_NAME} v{__version__}（文字翻译）")
+        self.setWindowTitle(t("app.title", version=__version__))
         self.resize(980, 880)
 
         central = QWidget()
@@ -52,13 +64,22 @@ class MainWindow(QMainWindow):
 
         # ---------------- 顶栏 ----------------
         top = QHBoxLayout()
-        title = QLabel(APP_DISPLAY_NAME)
+        title = QLabel(t("app.name"))
         title.setStyleSheet("font-size:16px; font-weight:700;")
-        self._status = QLabel("就绪")
+        self._status = QLabel(t("status.ready"))
         self._status.setObjectName("hint")
         top.addWidget(title)
         top.addWidget(self._status)
         top.addStretch(1)
+        top.addWidget(QLabel(t("lang.label")))
+        self._lang = QComboBox()
+        for code, label in i18n.languages():
+            self._lang.addItem(label, code)
+        idx = self._lang.findData(i18n.current())
+        self._lang.setCurrentIndex(idx if idx >= 0 else 0)
+        self._lang.setFixedWidth(130)
+        self._lang.currentIndexChanged.connect(self._on_language_changed)
+        top.addWidget(self._lang)
         root.addLayout(top)
 
         # ---------------- API 配置 ----------------
@@ -68,10 +89,12 @@ class MainWindow(QMainWindow):
         cl.setContentsMargins(10, 8, 10, 8)
         cl.setSpacing(6)
         self._provider = QComboBox()
-        self._provider.addItems(PROVIDERS)
-        self._provider.setCurrentIndex(max(0, PROVIDERS.index(s.api_provider) if s.api_provider in PROVIDERS else 0))
-        self._provider.currentTextChanged.connect(self._on_provider_changed)
-        cl.addWidget(QLabel("服务商"))
+        for key, label in provider_choices():
+            self._provider.addItem(label, key)
+        pidx = self._provider.findData(s.api_provider or "DeepSeek")
+        self._provider.setCurrentIndex(pidx if pidx >= 0 else 0)
+        self._provider.currentIndexChanged.connect(self._on_provider_changed)
+        cl.addWidget(QLabel(t("provider.label")))
         cl.addWidget(self._provider)
         cl.addWidget(QLabel("API"))
         self._api_base = QLineEdit(s.api_base)
@@ -87,13 +110,13 @@ class MainWindow(QMainWindow):
             self._model.addItem(s.model)
         self._model.setInsertPolicy(QComboBox.NoInsert)
         cl.addWidget(self._model)
-        self._btn_models = QPushButton("获取模型")
+        self._btn_models = QPushButton(t("btn.models"))
         self._btn_models.clicked.connect(self._fetch_models)
         cl.addWidget(self._btn_models)
-        self._btn_test = QPushButton("测试")
+        self._btn_test = QPushButton(t("btn.test"))
         self._btn_test.clicked.connect(self._test_api)
         cl.addWidget(self._btn_test)
-        self._btn_logs = QPushButton("日志")
+        self._btn_logs = QPushButton(t("btn.logs"))
         self._btn_logs.clicked.connect(self._open_logs)
         cl.addWidget(self._btn_logs)
         root.addWidget(cfg)
@@ -105,15 +128,15 @@ class MainWindow(QMainWindow):
         gl.setObjectName("card")
         gll = QHBoxLayout(gl)
         gll.setContentsMargins(10, 6, 10, 6)
-        self._gl_en = QCheckBox("SC术语表（Stanton→斯坦顿星系、Pyro→派罗星系…）")
+        self._gl_en = QCheckBox(t("glossary.label"))
         self._gl_en.setChecked(s.glossary_enabled)
         self._gl_en.toggled.connect(self._on_glossary_toggled)
         gll.addWidget(self._gl_en)
         self._gl_path = QLineEdit(s.glossary_path)
-        self._gl_path.setPlaceholderText("术语表文件(可选，留空用默认词条)")
+        self._gl_path.setPlaceholderText(t("glossary.path_ph"))
         self._gl_path.editingFinished.connect(self._on_glossary_path_edited)
         gll.addWidget(self._gl_path, 1)
-        self._btn_gl_tpl = QPushButton("生成术语表")
+        self._btn_gl_tpl = QPushButton(t("btn.make_glossary"))
         self._btn_gl_tpl.clicked.connect(self._glossary_template)
         gll.addWidget(self._btn_gl_tpl)
         self._gl_state = QLabel("")
@@ -127,10 +150,10 @@ class MainWindow(QMainWindow):
         sp.setObjectName("card")
         spl = QHBoxLayout(sp)
         spl.setContentsMargins(10, 6, 10, 6)
-        self._spicy = QCheckBox("嘴臭模式：开启用嘴臭提示词(嘲讽垃圾话)，关闭用正常提示词")
+        self._spicy = QCheckBox(t("spicy.label"))
         self._spicy.setChecked(s.spicy_mode)
         self._spicy.toggled.connect(self._on_spicy_toggled)
-        self._spicy.setToolTip("开启后“看懂”译文与“回话”输出都用嘴臭风格；关闭恢复正常。")
+        self._spicy.setToolTip(t("spicy.tip"))
         spl.addWidget(self._spicy)
         spl.addStretch(1)
         root.addWidget(sp)
@@ -140,19 +163,19 @@ class MainWindow(QMainWindow):
         mid.setSpacing(8)
 
         # 左：看懂（外->中）
-        card, lay = make_card("看懂：粘贴/输入外文 → 中文")
+        card, lay = make_card(t("pane.in.title"))
         self._in_en = QPlainTextEdit()
-        self._in_en.setPlaceholderText("把聊天里看到的外文粘贴/输入到这里…")
+        self._in_en.setPlaceholderText(t("pane.in.ph"))
         self._in_en.setMinimumHeight(280)
         lay.addWidget(self._in_en, 1)
         row = QHBoxLayout()
-        self._btn_tr = QPushButton("翻译到中文")
+        self._btn_tr = QPushButton(t("btn.translate_zh"))
         self._btn_tr.clicked.connect(self._translate_to_zh)
         row.addWidget(self._btn_tr)
-        self._btn_paste = QPushButton("粘贴剪贴板")
+        self._btn_paste = QPushButton(t("btn.paste"))
         self._btn_paste.clicked.connect(self._paste_in)
         row.addWidget(self._btn_paste)
-        self._btn_clear = QPushButton("清空")
+        self._btn_clear = QPushButton(t("btn.clear"))
         self._btn_clear.clicked.connect(lambda: self._in_en.clear())
         row.addWidget(self._btn_clear)
         row.addStretch(1)
@@ -160,45 +183,45 @@ class MainWindow(QMainWindow):
         mid.addWidget(card, 1)
 
         # 右：回话（中->外）
-        card2, lay2 = make_card("回话：输入中文 → 外文")
+        card2, lay2 = make_card(t("pane.out.title"))
         self._out_zh = QPlainTextEdit()
-        self._out_zh.setPlaceholderText("要发给外国玩家的中文回话…")
+        self._out_zh.setPlaceholderText(t("pane.out.ph"))
         self._out_zh.setMinimumHeight(120)
         lay2.addWidget(self._out_zh)
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel("目标"))
+        row2.addWidget(QLabel(t("lbl.target")))
         self._reply_target = QComboBox()
         self._reply_target.addItems(["English", "Japanese", "Korean"])
         self._reply_target.setFixedWidth(110)
         row2.addWidget(self._reply_target)
-        self._btn_reply = QPushButton("翻译并复制")
+        self._btn_reply = QPushButton(t("btn.translate_copy"))
         self._btn_reply.clicked.connect(self._translate_reply)
         row2.addWidget(self._btn_reply)
         row2.addStretch(1)
         lay2.addLayout(row2)
 
         outrow = QHBoxLayout()
-        outrow.addWidget(QLabel("输出"))
-        self._reply_out_code = QCheckBox("中文码")
+        outrow.addWidget(QLabel(t("lbl.output")))
+        self._reply_out_code = QCheckBox(t("chk.code"))
         self._reply_out_code.setChecked(bool(self.app.settings.reply_out_code))
-        self._reply_out_code.setToolTip("中译中：把中文编成游戏内可显示的中文码行（[zh] @…）")
+        self._reply_out_code.setToolTip(t("chk.code.tip"))
         self._reply_out_code.toggled.connect(lambda _v: self._on_reply_out_toggled("code"))
         outrow.addWidget(self._reply_out_code)
-        self._reply_out_foreign = QCheckBox("译文")
+        self._reply_out_foreign = QCheckBox(t("chk.foreign"))
         self._reply_out_foreign.setChecked(bool(self.app.settings.reply_out_foreign))
-        self._reply_out_foreign.setToolTip("中译外：翻译成目标语言（English/Japanese/Korean）")
+        self._reply_out_foreign.setToolTip(t("chk.foreign.tip"))
         self._reply_out_foreign.toggled.connect(lambda _v: self._on_reply_out_toggled("foreign"))
         outrow.addWidget(self._reply_out_foreign)
         outrow.addStretch(1)
         lay2.addLayout(outrow)
 
-        lay2.addWidget(QLabel("译文（只读，可选中复制）"))
+        lay2.addWidget(QLabel(t("lbl.result")))
         self._result_en = QPlainTextEdit()
         self._result_en.setReadOnly(True)
         self._result_en.setMinimumHeight(130)
         lay2.addWidget(self._result_en, 1)
         row3 = QHBoxLayout()
-        self._btn_copy = QPushButton("复制译文")
+        self._btn_copy = QPushButton(t("btn.copy_result"))
         self._btn_copy.clicked.connect(self._copy_result)
         row3.addWidget(self._btn_copy)
         row3.addStretch(1)
@@ -207,17 +230,17 @@ class MainWindow(QMainWindow):
         root.addLayout(mid, 1)
 
         # ---------------- 游戏聊天码（中文 -> 游戏内 @码）----------------
-        gc_card, gc = make_card("游戏聊天码：把中文送进游戏聊天（需已装带社区输入法支持的汉化）")
+        gc_card, gc = make_card(t("gc.title"))
         prow = QHBoxLayout()
-        prow.addWidget(QLabel("汉化 global.ini"))
+        prow.addWidget(QLabel(t("gc.path_label")))
         self._gc_path = QLineEdit()
-        self._gc_path.setPlaceholderText("留空 = 自动检测已安装的汉化")
+        self._gc_path.setPlaceholderText(t("gc.path_ph"))
         self._gc_path.editingFinished.connect(self._on_gc_path_edited)
         prow.addWidget(self._gc_path, 1)
-        self._btn_gc_detect = QPushButton("自动检测")
+        self._btn_gc_detect = QPushButton(t("gc.detect"))
         self._btn_gc_detect.clicked.connect(self._detect_gamecode)
         prow.addWidget(self._btn_gc_detect)
-        self._btn_gc_browse = QPushButton("浏览…")
+        self._btn_gc_browse = QPushButton(t("gc.browse"))
         self._btn_gc_browse.clicked.connect(self._browse_gamecode)
         prow.addWidget(self._btn_gc_browse)
         gc.addLayout(prow)
@@ -228,28 +251,28 @@ class MainWindow(QMainWindow):
 
         gcbox = QHBoxLayout()
         left = QVBoxLayout()
-        left.addWidget(QLabel("中文（双行模式下输入即时出中文码）"))
+        left.addWidget(QLabel(t("gc.in_label")))
         self._gc_in = QPlainTextEdit()
-        self._gc_in.setPlaceholderText("你好吗")
+        self._gc_in.setPlaceholderText(t("gc.in_ph"))
         self._gc_in.setMinimumHeight(70)
         self._gc_in.textChanged.connect(self._on_gc_text)
         left.addWidget(self._gc_in)
         lrow = QHBoxLayout()
-        self._btn_gc_encode = QPushButton("生成并复制")
+        self._btn_gc_encode = QPushButton(t("btn.encode_copy"))
         self._btn_gc_encode.clicked.connect(lambda: self._gc_do("encode"))
         lrow.addWidget(self._btn_gc_encode)
-        self._gc_autocopy = QCheckBox("自动复制")
+        self._gc_autocopy = QCheckBox(t("gc.autocopy"))
         self._gc_autocopy.setChecked(bool(self.app.settings.gamecode_auto_copy))
         self._gc_autocopy.toggled.connect(self._on_gc_autocopy)
         lrow.addWidget(self._gc_autocopy)
-        self._gc_out_code = QCheckBox("中文码")
+        self._gc_out_code = QCheckBox(t("chk.code"))
         self._gc_out_code.setChecked(bool(self.app.settings.gamecode_out_code))
-        self._gc_out_code.setToolTip("中译中：输出游戏内可显示的中文码行（[zh] @…）")
+        self._gc_out_code.setToolTip(t("gc.chk.code.tip"))
         self._gc_out_code.toggled.connect(lambda _v: self._on_gc_out_toggled("code"))
         lrow.addWidget(self._gc_out_code)
-        self._gc_out_en = QCheckBox("英文")
+        self._gc_out_en = QCheckBox(t("gc.chk.en"))
         self._gc_out_en.setChecked(bool(self.app.settings.gamecode_out_en))
-        self._gc_out_en.setToolTip("中译英：调用翻译 API 输出英文译文行（[en] …）")
+        self._gc_out_en.setToolTip(t("gc.chk.en.tip"))
         self._gc_out_en.toggled.connect(lambda _v: self._on_gc_out_toggled("en"))
         lrow.addWidget(self._gc_out_en)
         lrow.addStretch(1)
@@ -257,17 +280,17 @@ class MainWindow(QMainWindow):
         gcbox.addLayout(left, 1)
 
         right = QVBoxLayout()
-        right.addWidget(QLabel("游戏码 / 结果（可粘贴别人的 [zh] 消息后解码）"))
+        right.addWidget(QLabel(t("gc.out_label")))
         self._gc_out = QPlainTextEdit()
         self._gc_out.setMinimumHeight(70)
-        self._gc_out.setPlaceholderText("[zh] @IH@E8@AP")
+        self._gc_out.setPlaceholderText(t("gc.out_ph_code"))
         self._gc_out.textChanged.connect(self._on_gc_out_text)
         right.addWidget(self._gc_out)
         rrow = QHBoxLayout()
-        self._btn_gc_decode = QPushButton("解码为中文")
+        self._btn_gc_decode = QPushButton(t("btn.decode"))
         self._btn_gc_decode.clicked.connect(lambda: self._gc_do("decode"))
         rrow.addWidget(self._btn_gc_decode)
-        self._btn_gc_copy = QPushButton("复制结果")
+        self._btn_gc_copy = QPushButton(t("btn.copy_gc"))
         self._btn_gc_copy.clicked.connect(self._copy_gc_out)
         rrow.addWidget(self._btn_gc_copy)
         rrow.addStretch(1)
@@ -298,16 +321,13 @@ class MainWindow(QMainWindow):
         st = gamecode.status()
         if st["ready"]:
             self._gc_state.setText(
-                f"码表就绪：{st['size']} 字"
-                + (f" · 版本 {st['version']}" if st["version"] else "")
-                + f" · 来源 {st['source']}"
+                t("gc.state_ready", size=st["size"])
+                + (t("gc.state_version", version=st["version"]) if st["version"] else "")
+                + t("gc.state_source", source=st["source"])
             )
             self._gc_state.setStyleSheet("")
         else:
-            self._gc_state.setText(
-                "未找到码表：请先安装带“社区输入法支持”的汉化，或点“浏览…”选择游戏目录下的 "
-                "…\\Localization\\chinese_(simplified)\\global.ini"
-            )
+            self._gc_state.setText(t("gc.state_missing"))
             self._gc_state.setStyleSheet("color:#f5b83d;")
 
     def _detect_gamecode(self) -> None:
@@ -315,12 +335,7 @@ class MainWindow(QMainWindow):
 
         path = gamecode.autodetect()
         if path is None:
-            QMessageBox.warning(
-                self,
-                "未找到码表",
-                "没有在本机找到带社区输入法码表的 global.ini。\n"
-                "请先在 SC 汉化盒子里安装带“社区输入法支持”的汉化，或手动选择文件。",
-            )
+            QMessageBox.warning(self, t("dlg.no_table.title"), t("dlg.no_table.body"))
             return
         self._load_gamecode_path(str(path))
 
@@ -328,7 +343,7 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QFileDialog
 
         start = self.app.settings.gamecode_ini_path or ""
-        path, _ = QFileDialog.getOpenFileName(self, "选择汉化后的 global.ini", start, "INI 文件 (*.ini);;所有文件 (*)")
+        path, _ = QFileDialog.getOpenFileName(self, t("dlg.pick_ini"), start, t("filter.ini"))
         if path:
             self._load_gamecode_path(path)
 
@@ -343,13 +358,13 @@ class MainWindow(QMainWindow):
         try:
             n = gamecode.load_global_ini(path) if path else 0
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "码表加载失败", str(exc))
+            QMessageBox.warning(self, t("dlg.load_fail.title"), str(exc))
             self.app.apply_gamecode()
         else:
             if not n and path:
-                QMessageBox.warning(self, "码表为空", "该文件里没有社区输入法码表块。")
+                QMessageBox.warning(self, t("dlg.empty_table.title"), t("dlg.empty_table.body"))
                 self.app.apply_gamecode()
-            self._set_status(f"游戏码表已加载：{n} 字")
+            self._set_status(t("status.table_loaded", n=n))
         self._refresh_gamecode_state()
 
     def _on_gc_text(self) -> None:
@@ -384,8 +399,24 @@ class MainWindow(QMainWindow):
             self._gc_timer.stop()
         self._gc_timer = QTimer(self)
         self._gc_timer.setSingleShot(True)
-        self._gc_timer.timeout.connect(lambda: self._copy_text(text, "已复制，进游戏 Ctrl+V 发送"))
+        self._gc_timer.timeout.connect(lambda: self._copy_text(text, t("status.copied_send")))
         self._gc_timer.start(800)
+
+    # ---- 界面语言 ----
+    def _on_language_changed(self, _idx: int) -> None:
+        """切换界面语言：落盘并立即重建窗口（翻译进行中先拒绝，避免回调打到旧控件）。"""
+        code = self._lang.currentData()
+        if not code or code == i18n.current():
+            return
+        if self._busy or self._gc_busy:
+            self._set_status(t("status.lang_busy"))
+            idx = self._lang.findData(i18n.current())
+            if idx >= 0:
+                self._lang.blockSignals(True)
+                self._lang.setCurrentIndex(idx)
+                self._lang.blockSignals(False)
+            return
+        self.app.set_ui_language(str(code))
 
     # ---- 输出选择：中文码 / 英文（游戏聊天码卡片）----
     def _on_gc_out_toggled(self, which: str) -> None:
@@ -405,19 +436,19 @@ class MainWindow(QMainWindow):
         s.save()
         self._refresh_gc_mode()
         if reverted:
-            self._set_status("至少保留一项输出：中文码 或 英文")
+            self._set_status(t("status.min_one_gc"))
 
     def _refresh_gc_mode(self) -> None:
         code, en = self._gc_out_code.isChecked(), self._gc_out_en.isChecked()
         if code and en:
-            self._btn_gc_encode.setText("生成双行并复制")
-            self._gc_out.setPlaceholderText("[zh] @IH@E8@AP\n[en] How are you")
+            self._btn_gc_encode.setText(t("btn.gen_dual"))
+            self._gc_out.setPlaceholderText(t("gc.out_ph_dual"))
         elif en:
-            self._btn_gc_encode.setText("翻译为英文并复制")
-            self._gc_out.setPlaceholderText("How are you")
+            self._btn_gc_encode.setText(t("btn.translate_en_copy"))
+            self._gc_out.setPlaceholderText(t("gc.out_ph_en"))
         else:
-            self._btn_gc_encode.setText("编码并复制")
-            self._gc_out.setPlaceholderText("[zh] @IH@E8@AP")
+            self._btn_gc_encode.setText(t("btn.encode_copy"))
+            self._gc_out.setPlaceholderText(t("gc.out_ph_code"))
 
     def _gc_do(self, mode: str) -> None:
         if mode == "decode":
@@ -441,7 +472,7 @@ class MainWindow(QMainWindow):
             return
         zh = self._gc_in.toPlainText().strip()
         if not zh:
-            self._set_status("请先在左侧输入中文")
+            self._set_status(t("status.need_zh"))
             return
 
         want_code = self._gc_out_code.isChecked()
@@ -451,20 +482,15 @@ class MainWindow(QMainWindow):
             if gamecode.configured():
                 code_line = gamecode.encode(zh)
             else:
-                note = "⚠ 未找到汉化码表，无法生成中文码"
+                note = t("warn.no_table_code")
                 if not want_en:
-                    QMessageBox.information(
-                        self,
-                        "提示",
-                        "中文码需要汉化码表。\n请先安装带“社区输入法支持”的汉化，"
-                        "或点“自动检测 / 浏览…”指定 global.ini；\n也可以只勾“英文”用翻译输出。",
-                    )
+                    QMessageBox.information(self, t("dlg.notice"), t("dlg.need_table.code_body"))
                     return
 
         if not want_en:
             # 只需中文码：纯本地，不调用 API
             self._set_gc_out(code_line)
-            self._copy_text(code_line, "已复制中文码，进游戏 Ctrl+V 发送")
+            self._copy_text(code_line, t("status.copied_code"))
             if note:
                 self._set_status(note)
             return
@@ -473,14 +499,14 @@ class MainWindow(QMainWindow):
         if client is None:
             if code_line:   # 没有翻译后端：至少把中文码给出去
                 self._set_gc_out(code_line)
-                self._copy_text(code_line, "未配置 API Key，仅复制中文码行")
+                self._copy_text(code_line, t("status.no_key_code_only"))
             else:
-                self._set_status("需要 API Key 才能生成英文")
+                self._set_status(t("status.need_key_en"))
             return
 
         self._gc_busy = True
         self._btn_gc_encode.setEnabled(False)
-        self._set_status("翻译中…")
+        self._set_status(t("status.translating"))
 
         def work():
             return client.translate_reply(zh, "English", spicy=bool(self.app.settings.spicy_mode))
@@ -491,7 +517,7 @@ class MainWindow(QMainWindow):
             if not ok:
                 if code_line:   # 翻译失败：至少把中文码给出去
                     self._set_gc_out(code_line)
-                    self._copy_text(code_line, f"翻译失败（{val}），仅复制中文码行")
+                    self._copy_text(code_line, t("status.translate_failed_code", err=val))
                 else:
                     self._show_fail(val)
                 return
@@ -499,8 +525,7 @@ class MainWindow(QMainWindow):
             out = f"{code_line}\n[en] {en}" if code_line else en
             self._set_gc_out(out)
             self._gc_timer_stop()
-            which = "双行（中文码+英文）" if code_line else "英文"
-            self._copy_text(out, f"已复制{which}，进游戏 Ctrl+V 发送")
+            self._copy_text(out, t("status.copied_dual") if code_line else t("status.copied_en"))
             if note:
                 self._set_status(note)
 
@@ -522,16 +547,12 @@ class MainWindow(QMainWindow):
         from .. import gamecode
 
         if not gamecode.configured():
-            QMessageBox.information(
-                self,
-                "提示",
-                "游戏码表未加载。\n请先安装带“社区输入法支持”的汉化，或点“自动检测 / 浏览…”指定 global.ini。",
-            )
+            QMessageBox.information(self, t("dlg.notice"), t("dlg.need_table.code_body"))
             return
         try:
             raw = self._gc_out.toPlainText()
             if not raw.strip():
-                self._set_status("请先在右侧粘贴 [zh] 开头的游戏码消息")
+                self._set_status(t("status.need_paste_code"))
                 return
             zh = gamecode.decode(raw)
             self._gc_syncing = True
@@ -539,9 +560,9 @@ class MainWindow(QMainWindow):
                 self._gc_in.setPlainText(zh)     # 左侧显示中文，便于继续编辑/再翻译
             finally:
                 self._gc_syncing = False
-            self._copy_text(zh, "已解码并复制中文")
+            self._copy_text(zh, t("status.decoded"))
             if not gamecode.has_zh_marker(raw):
-                self._set_status("已解码并复制中文（未检测到 [zh] 前缀，结果可能不准）")
+                self._set_status(t("status.decoded_unsure"))
         except Exception as exc:  # noqa: BLE001
             self._show_fail(exc)
 
@@ -552,7 +573,7 @@ class MainWindow(QMainWindow):
         self._set_status(tip)
 
     def _copy_gc_out(self) -> None:
-        self._copy_text(self._gc_out.toPlainText(), "已复制游戏码")
+        self._copy_text(self._gc_out.toPlainText(), t("status.copied_send"))
 
     # ---------------- API ----------------
     def _on_provider_changed(self, name: str) -> None:
@@ -574,7 +595,7 @@ class MainWindow(QMainWindow):
     def _persist_api(self) -> bool:
         key = self._keyline.text().strip()
         if not key:
-            QMessageBox.warning(self, "缺少 API Key", "请先填写 API Key。")
+            QMessageBox.warning(self, t("dlg.no_key.title"), t("dlg.no_key.body"))
             return False
         self.app.settings.api_base = self._api_base.text().strip()
         self.app.settings.model = self._model.currentText().strip() or "deepseek-chat"
@@ -586,7 +607,7 @@ class MainWindow(QMainWindow):
         if not self._persist_api():
             return
         self._btn_models.setEnabled(False)
-        self._btn_models.setText("获取中…")
+        self._btn_models.setText(t("btn.loading"))
         client = self.app.make_client(use_cache=False)
 
         def work():
@@ -594,9 +615,9 @@ class MainWindow(QMainWindow):
 
         def done(ok, val):
             self._btn_models.setEnabled(True)
-            self._btn_models.setText("获取模型")
+            self._btn_models.setText(t("btn.models"))
             if not ok:
-                QMessageBox.critical(self, "获取失败", str(val))
+                QMessageBox.critical(self, t("dlg.fetch_fail.title"), str(val))
                 return
             cur = self._model.currentText()
             models = list(val or [])
@@ -614,7 +635,7 @@ class MainWindow(QMainWindow):
         if not self._persist_api():
             return
         self._btn_test.setEnabled(False)
-        self._btn_test.setText("测试中…")
+        self._btn_test.setText(t("btn.testing"))
         client = self.app.make_client(use_cache=False)
         client.opts.model = self._model.currentText().strip() or "deepseek-chat"
 
@@ -623,11 +644,11 @@ class MainWindow(QMainWindow):
 
         def done(ok, val):
             self._btn_test.setEnabled(True)
-            self._btn_test.setText("测试")
+            self._btn_test.setText(t("btn.test"))
             if ok:
-                QMessageBox.information(self, "测试成功", f"测试译文：{val}")
+                QMessageBox.information(self, t("dlg.test_ok.title"), t("dlg.test_ok.body", val=val))
             else:
-                QMessageBox.critical(self, "测试失败", str(val))
+                QMessageBox.critical(self, t("dlg.test_fail.title"), str(val))
 
         self.app.run_in_thread(work, done)
 
@@ -637,11 +658,11 @@ class MainWindow(QMainWindow):
             from .. import glossary
 
             if not self.app.settings.glossary_enabled:
-                self._gl_state.setText("已关闭")
+                self._gl_state.setText(t("gl.state_off"))
             elif glossary.configured():
-                self._gl_state.setText(f"已生效 {len(glossary._terms)} 词条")
+                self._gl_state.setText(t("gl.state_active", n=len(glossary._terms)))
             else:
-                self._gl_state.setText("未生效")
+                self._gl_state.setText(t("gl.state_inactive"))
         except Exception as exc:  # noqa: BLE001
             self._gl_state.setText(str(exc))
 
@@ -670,15 +691,15 @@ class MainWindow(QMainWindow):
                 self.app.settings.save()
                 self.app.apply_glossary()
                 self._refresh_glossary_state()
-                QMessageBox.information(self, "术语表已生成", f"{target}\n\n每行 英文词条 = 中文译名")
+                QMessageBox.information(self, t("gl.made"), f"{target}\n\n每行 英文词条 = 中文译名")
         except Exception as exc:  # noqa: BLE001
-            QMessageBox.warning(self, "生成失败", str(exc))
+            QMessageBox.warning(self, t("gl.make_fail"), str(exc))
 
     # ---------------- 动作 ----------------
     def _on_spicy_toggled(self, _on: bool) -> None:
         self.app.settings.spicy_mode = self._spicy.isChecked()
         self.app.settings.save()
-        self._set_status("嘴臭模式已开启" if self._spicy.isChecked() else "嘴臭模式已关闭")
+        self._set_status(t("status.spicy_on") if self._spicy.isChecked() else t("status.spicy_off"))
 
     def _paste_in(self) -> None:
         from PySide6.QtWidgets import QApplication
@@ -689,14 +710,14 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(self._result_en.toPlainText())
-        self._set_status("已复制译文")
+        self._set_status(t("status.copied_result"))
 
     def _translate_to_zh(self) -> None:
         if self._busy:
             return
         text = self._in_en.toPlainText().strip()
         if not text:
-            QMessageBox.information(self, "提示", "请先粘贴或输入外文。")
+            QMessageBox.information(self, t("dlg.notice"), t("dlg.need_foreign"))
             return
         if not self._persist_api():
             return
@@ -715,7 +736,7 @@ class MainWindow(QMainWindow):
             return
         text = self._out_zh.toPlainText().strip()
         if not text:
-            QMessageBox.information(self, "提示", "请先输入中文回话。")
+            QMessageBox.information(self, t("dlg.notice"), t("dlg.need_reply"))
             return
         target = self._reply_target.currentText()
         want_code, want_foreign = self._reply_out_code.isChecked(), self._reply_out_foreign.isChecked()
@@ -724,16 +745,11 @@ class MainWindow(QMainWindow):
         if want_code and not want_foreign:
             code_line, note = self._reply_code_line(text)
             if not code_line:
-                QMessageBox.information(
-                    self,
-                    "提示",
-                    "中文码需要汉化码表。\n请先安装带“社区输入法支持”的汉化，"
-                    "或到下方“游戏聊天码”卡片点“自动检测 / 浏览…”指定 global.ini。",
-                )
+                QMessageBox.information(self, t("dlg.notice"), t("dlg.need_table.reply_body"))
                 return
             self._result_en.setPlainText(code_line)
             self._copy_result()
-            self._set_status(note or "已复制中文码，进游戏 Ctrl+V 发送")
+            self._set_status(note or t("status.copied_code"))
             return
 
         if not self._persist_api():
@@ -831,8 +847,8 @@ class MainWindow(QMainWindow):
         self.app.run_in_thread(work, done)
 
     def _show_fail(self, msg) -> None:
-        self._set_status(f"失败：{msg}")
-        QMessageBox.warning(self, "翻译失败", str(msg))
+        self._set_status(t("status.fail", msg=msg))
+        QMessageBox.warning(self, t("dlg.fail.title"), str(msg))
 
     def _set_status(self, text: str) -> None:
         self._status.setText(text)

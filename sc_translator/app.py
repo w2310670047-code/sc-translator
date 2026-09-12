@@ -32,6 +32,11 @@ class AppController:
     def __init__(self, app: QApplication, settings: Optional[Settings] = None) -> None:
         self.qapp = app
         self.settings = settings or Settings().load()
+        # 界面语言要在建窗口之前生效
+        from . import i18n
+
+        i18n.set_language(self.settings.ui_language)
+        app.setApplicationDisplayName(i18n.t("app.name"))
         setup_logging(logging.DEBUG if self.settings.log_level == "DEBUG" else logging.INFO)
         log.info("%s v%s 启动", APP_DISPLAY_NAME, __version__)
 
@@ -63,6 +68,26 @@ class AppController:
 
         self.mainwin = MainWindow(self)
         self.mainwin.setStyleSheet(build_stylesheet(self.settings.theme))
+
+    def set_ui_language(self, code: str) -> None:
+        """切换界面语言：落盘 + 立即重建窗口（保留尺寸位置）。"""
+        from . import i18n
+
+        code = i18n.set_language(code)
+        self.settings.ui_language = code
+        self.settings.save()
+        old = self.mainwin
+        geo = old.geometry() if old is not None else None
+        self.init_ui()
+        if geo is not None and self.mainwin is not None:
+            self.mainwin.setGeometry(geo)
+        if old is not None:
+            old.hide()
+            old.deleteLater()
+        if self.mainwin is not None:
+            self.mainwin.show()
+        self.qapp.setApplicationDisplayName(i18n.t("app.name"))
+        log.info("界面语言已切换为 %s", code)
 
     # ------------------------------------------------------- API
     @property

@@ -17,3 +17,7 @@ tools/_out/
 .gh_token
 *.token
 tokens.txt
+
+# DSH vision-router artifacts / temp screenshots (local run traces, never publish)
+.dsh-vision-router/
+*.present.png

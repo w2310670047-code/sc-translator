@@ -41,10 +41,12 @@ SCTranslator\
 4. **回话**：把中文写到右侧、选目标语言 → 点 **翻译并复制** → 译文自动进剪贴板，回游戏 Ctrl+V
 5. 可选：**输出勾选**（回话区「中文码」/「译文」两个复选框）——按需选择中译中、中译英，或两者同时（双行）
 6. 可选：勾选/取消 **嘴臭模式**，即刻切换后续译文使用的提示词
+7. 可选：顶栏右下角 **界面语言** 下拉框切换 简体中文 / 繁體中文 / English（立即生效，记入 `data\settings.json`）
 
 ## 功能一览
 
 - 双向翻译：外文 → 中文；中文 → English / Japanese / Korean（自动复制）
+- **界面三语切换**：顶栏下拉框随时切换 **简体中文 / 繁體中文 / English**，立即生效并记忆
 - **输出勾选**：中译中（`[zh] @中文码`）/ 中译英 / 两者同时（双行 `[en] 译文`），回话区与游戏码卡片各一组
 - **游戏聊天码**：中文 ↔ 游戏内 `@码`（`你好吗` → `[zh] @IH@E8@AP`），让游戏聊天里也能发中文
 - 术语表预替换：1200+ 条官方中英对照（地名 / 载具 / 物品 / 组织），可自行增删
@@ -93,6 +95,17 @@ SCTranslator\
 - 勾选状态写入 `data\settings.json`（`reply_out_code` / `reply_out_foreign`、`gamecode_out_code` / `gamecode_out_en`），下次启动保持
 - 本机没有汉化码表时：只勾中文码会提示去装汉化；勾了中文码+译文则**自动退回只输出译文**并提示，不会发出半成品
 - 翻译失败/未配 API Key 时也会退化为只发中文码行，保证消息发得出去
+
+## 界面语言（简中 / 繁中 / English）
+
+顶栏右下角的下拉框即可切换，**立即重建界面生效**，无需重启；选择写入 `data\settings.json` 的 `ui_language`。
+
+- 文案表在 `sc_translator/i18n.py`：**一条 key 一行三语**（元组），结构上保证不会漏翻；
+  `tests/test_i18n.py` 会检查三语齐全、英文不含中文、繁中确实不同于简中
+- 新增文案只需加一行元组；缺失时自动回退简体中文，再回退 key 本身（永不抛异常）
+- 翻译进行中会拒绝切换（避免回调写到已销毁的控件），状态栏给出提示
+- 服务商下拉的**显示名**随语言变化，**存进设置的值**始终是稳定 key（`DeepSeek`/`OpenAI`/`custom`），
+  旧版存过显示名的设置会自动迁移
 
 ## 提示词文件（可自行编辑）
 
@@ -146,7 +159,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 会守住这条底线：一旦导入图里出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.2.2-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.3.0-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 
@@ -180,7 +193,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 101 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
 ```
 
 ```text
@@ -192,6 +205,7 @@ sc_translator/
   prompts.py          提示词文件加载与回退
   glossary.py         术语表（专名预替换）
   gamecode.py         游戏聊天码（码表解析 / 编码 / 解码）
+  i18n.py             界面三语文案表（简中/繁中/English）
   textutil.py         轻量文本工具（汉字占比）
   paths.py settings.py secrets.py logger_setup.py exchange_log.py
   translate/          缓存 + OpenAI 兼容客户端（批量/重试/思考模式关闭）

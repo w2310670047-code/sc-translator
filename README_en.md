@@ -11,7 +11,7 @@ A **two-way text translator for Star Citizen players** (Windows desktop app, pla
 
 Translation runs against any **OpenAI-compatible API** (DeepSeek by default). Prompts and glossary are external editable files.
 
-> The app UI is currently **Simplified Chinese** only (no i18n files for other locales yet).
+> The UI ships in **Simplified Chinese / Traditional Chinese / English** — switch it from the dropdown in the top-right corner, effective immediately.
 > Project shape inspired by [ow-translate-lite](https://github.com/reverieach/ow-translate-lite);
 > earlier versions did "region capture + OCR + overlay" real-time screen translation — screen translation has since been **removed** in favor of this far cheaper (CPU and tokens) text-only workflow.
 
@@ -46,6 +46,7 @@ SCTranslator\
 ## Features
 
 - Two-way translation: foreign → Chinese; Chinese → English / Japanese / Korean (auto-copied)
+- **Trilingual UI**: switch between **Simplified Chinese / Traditional Chinese / English** from the top-bar dropdown — applied instantly and remembered
 - **Output checkboxes**: zh→zh (`[zh] @code`), zh→foreign, or both (two lines: `[zh] @…` + `[en] …`) — one set in the reply pane, one in the game-chat-code card
 - **Game chat code**: Chinese ↔ in-game `@code` (`你好吗` → `[zh] @IH@E8@AP`), so you can actually send Chinese in game chat
 - Glossary pre-replacement: 1200+ official EN/ZH pairs (locations / vehicles / items / organizations), fully editable
@@ -96,6 +97,19 @@ Implementation notes (`sc_translator/gamecode.py`):
 - Choices persist in `data\settings.json` (`reply_out_code` / `reply_out_foreign`, `gamecode_out_code` / `gamecode_out_en`)
 - Without a code table: "Chinese code only" points you at installing the localization; "code + translation" silently falls back to translation only — never a half-finished message
 - On API failure or a missing key it degrades to the Chinese code line, so the message still gets out
+
+## UI language (Simplified / Traditional Chinese / English)
+
+Use the dropdown in the top-right corner: the window is rebuilt immediately, no restart needed, and the
+choice is stored as `ui_language` in `data\settings.json`.
+
+- The string table lives in `sc_translator/i18n.py`: **one key per row, three languages as a tuple**, so a
+  missing translation is structurally impossible; `tests/test_i18n.py` asserts all three locales are
+  complete, that the English strings contain no Chinese, and that Traditional differs from Simplified
+- Adding a string is one tuple; a missing/empty entry falls back to Simplified Chinese and then to the key itself
+- Switching is refused while a translation is in flight (so callbacks cannot hit destroyed widgets) and the status line says so
+- Provider **display names** follow the language, while the **stored value** stays a stable key
+  (`DeepSeek`/`OpenAI`/`custom`); settings that stored a legacy display name are migrated automatically
 
 ## Prompt files (editable)
 
@@ -149,7 +163,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.2.2-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.3.0-win64.zip` into the release attachments.
 
 ## Configuration & data
 
@@ -181,7 +195,7 @@ then drop `dist\SCTranslator-v0.2.2-win64.zip` into the release attachments.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 101 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
 ```
 
 ```text

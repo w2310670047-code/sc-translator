@@ -11,7 +11,7 @@
 
 翻譯後端走 **OpenAI 相容 API**（預設 DeepSeek），提示詞與詞彙表全部外置成可編輯檔案。
 
-> 程式介面文字目前為**簡體中文**（尚未提供繁中語系檔）。
+> 程式介面支援**簡體中文 / 繁體中文 / English** 三語切換（頂欄右下角下拉框，立即生效）。
 > 專案形態參考 [ow-translate-lite](https://github.com/reverieach/ow-translate-lite)；
 > 早期版本做過「框選螢幕 + OCR + 懸浮窗」的即時螢幕翻譯，現已**移除螢幕翻譯**，只保留更省 CPU、更省 token 的純文字翻譯。
 
@@ -46,6 +46,7 @@ SCTranslator\
 ## 功能一覽
 
 - 雙向翻譯：外文 → 中文；中文 → English / Japanese / Korean（自動複製）
+- **介面三語切換**：頂欄下拉框隨時切換 **簡體中文 / 繁體中文 / English**，立即生效並記憶
 - **輸出勾選**：中譯中（`[zh] @中文碼`）／中譯英／兩者同時（雙行 `[en] 譯文`），回話區與遊戲碼卡片各一組
 - **遊戲聊天碼**：中文 ↔ 遊戲內 `@碼`（`你好嗎` → `[zh] @IH@E8@AP`），讓遊戲聊天裡也能發中文
 - 詞彙表預替換：1200+ 條官方中英對照（地名／載具／物品／組織），可自行增刪
@@ -94,6 +95,16 @@ SCTranslator\
 - 勾選狀態寫入 `data\settings.json`（`reply_out_code` / `reply_out_foreign`、`gamecode_out_code` / `gamecode_out_en`），下次啟動保持
 - 本機沒有漢化碼表時：只勾中文碼會提示去安裝漢化；勾了中文碼+譯文則**自動退回只輸出譯文**並提示，不會發出半成品
 - 翻譯失敗／未設定 API Key 時也會退化為只發中文碼行，確保訊息送得出去
+
+## 介面語言（簡中 / 繁中 / English）
+
+頂欄右下角的下拉框即可切換，**立即重建介面生效**，無需重新啟動；選擇寫入 `data\settings.json` 的 `ui_language`。
+
+- 文案表在 `sc_translator/i18n.py`：**一條 key 一行三語**（元組），結構上保證不漏翻；
+  `tests/test_i18n.py` 會檢查三語齊全、英文不含中文、繁中確實不同於簡中
+- 新增文案只需加一行元組；缺失時自動回退簡體中文，再回退 key 本身
+- 翻譯進行中會拒絕切換（避免回呼寫到已銷毀的控件），狀態列會提示
+- 服務商下拉的**顯示名**隨語言改變，**存進設定的值**始終是穩定 key，舊版存過顯示名的設定會自動移轉
 
 ## 提示詞檔案（可自行編輯）
 
@@ -147,7 +158,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 會守住這條底線：一旦匯入圖出現重量級相依，測試直接失敗。
 
 發佈到 GitHub：雙擊 `publish.bat`（設定 origin → 推送 `main` → 複製發行說明到剪貼簿並開啟 Release 頁面），
-再把 `dist\SCTranslator-v0.2.2-win64.zip` 拖進 Release 附件區即可。
+再把 `dist\SCTranslator-v0.3.0-win64.zip` 拖進 Release 附件區即可。
 
 ## 設定與資料
 
@@ -181,7 +192,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 101 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
 ```
 
 ```text

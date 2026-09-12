@@ -232,11 +232,12 @@ def _run() -> int:
     if not lock.tryLock(50):
         from PySide6.QtWidgets import QMessageBox
 
+        from .i18n import t as _t
+
         QMessageBox.information(
             None,
-            "提示",
-            "SC 翻译器已在运行（或上次异常退出）。\n"
-            "若确认没有运行，请删除下面的文件后重试：\n" + os.path.join(_data_dir(), "instance.lock"),
+            _t("boot.already_running.title"),
+            _t("boot.already_running.body") + os.path.join(_data_dir(), "instance.lock"),
         )
         return 1
 
@@ -276,6 +277,14 @@ def main() -> int:
         migrate_legacy_data()
     except Exception:  # noqa: BLE001
         pass
+    # 界面语言：尽早生效，保证启动期对话框也是用户选择的语言
+    try:
+        from .settings import Settings as _Settings
+        from .i18n import set_language as _set_language
+
+        _set_language(_Settings().load().ui_language)
+    except Exception:  # noqa: BLE001
+        pass
     # 首次运行自举：释放随包提示词 / 术语表到程序目录（已存在则不动）
     try:
         from . import bootstrap
@@ -296,10 +305,12 @@ def main() -> int:
             from PySide6.QtWidgets import QApplication, QMessageBox
 
             _ = QApplication.instance() or QApplication(sys.argv[:1])
+            from .i18n import t as _t
+
             QMessageBox.critical(
                 None,
-                "SC 翻译器启动失败",
-                "启动时发生错误，详见日志：\n" + os.path.join(_logs_dir(), "startup.log"),
+                _t("boot.start_fail.title"),
+                _t("boot.start_fail.body") + os.path.join(_logs_dir(), "startup.log"),
             )
         except Exception:
             pass

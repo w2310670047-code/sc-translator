@@ -17,11 +17,15 @@ from . import secrets
 log = logging.getLogger(__name__)
 
 # 常见 OpenAI 兼容服务预设（可自行改 api_base）
+# 注意：key 是**稳定标识**，不要本地化——界面显示名走 i18n（provider.custom）
 PROVIDER_PRESETS = {
     "DeepSeek": "https://api.deepseek.com",
     "OpenAI": "https://api.openai.com/v1",
-    "自定义 OpenAI 兼容": "",
+    "custom": "",
 }
+
+# 旧版把显示名直接存进了设置，读取时升级为稳定 key
+LEGACY_PROVIDER_NAMES = {"自定义 OpenAI 兼容": "custom"}
 
 API_KEY_PLAINTEXT_FALLBACK = "_plaintext"
 
@@ -83,6 +87,7 @@ class Settings:
     gamecode_out_en: bool = False      # 游戏码卡片：输出英文译文行
     # ---- 界面 ----
     theme: str = "dark"
+    ui_language: str = "zh_CN"         # 界面语言: zh_CN / zh_TW / en
     log_level: str = "INFO"
     overlay_geometry: Optional[dict] = None  # 悬浮框位置 {x,y,w,h}(logical)
     pin_single_core: bool = False            # 纯文字翻译场景无需单核绑定(原屏幕OCR用)
@@ -115,6 +120,8 @@ class Settings:
                 if data.get("reply_dual_line") is True:
                     self.reply_out_code = True
                     self.reply_out_foreign = True
+                # 旧版把服务商显示名存进设置，升级为稳定 key
+                self.api_provider = LEGACY_PROVIDER_NAMES.get(self.api_provider, self.api_provider)
             except Exception as exc:  # noqa: BLE001
                 log.warning("读取设置失败，使用默认值: %s", exc)
         return self
