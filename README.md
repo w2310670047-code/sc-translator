@@ -1,4 +1,6 @@
-﻿# Star Citizen 翻译器 (SC Translator)
+# Star Citizen 翻译器 (SC Translator)
+
+**简体中文** | [繁體中文](README_zh-TW.md) | [English](README_en.md)
 
 面向《星际公民》玩家的 **双向文字翻译器**（Windows 桌面程序，纯文本输入输出）：
 
@@ -16,7 +18,7 @@
 
 ## 下载即用（打包版）
 
-在 [Releases](https://github.com/rtgi6/sc-translator/releases) 下载 `SCTranslator-v*-win64.zip`，解压到任意目录后双击 `SCTranslator.exe`。免安装、免 Python 环境。
+在 [Releases](https://github.com/w2310670047-code/sc-translator/releases) 下载 `SCTranslator-v*-win64.zip`，解压到任意目录后双击 `SCTranslator.exe`。免安装、免 Python 环境。
 
 ```text
 SCTranslator\
@@ -37,14 +39,13 @@ SCTranslator\
 2. 主窗口选服务商 **DeepSeek**（默认地址 `https://api.deepseek.com`），粘贴 Key
 3. **看懂**：把外文粘到左侧 → 点 **翻译到中文**（或 `Ctrl+Enter`）→ 右下结果显示译文
 4. **回话**：把中文写到右侧、选目标语言 → 点 **翻译并复制** → 译文自动进剪贴板，回游戏 Ctrl+V
-5. 可选：**双行开关**（回话区）——开：同时给中文与外语（第一行 `[zh] @中文码`，第二行 `[en] 译文`），
-   中国玩家和外国玩家都能看懂；关：只输出译文
+5. 可选：**输出勾选**（回话区「中文码」/「译文」两个复选框）——按需选择中译中、中译英，或两者同时（双行）
 6. 可选：勾选/取消 **嘴臭模式**，即刻切换后续译文使用的提示词
 
 ## 功能一览
 
 - 双向翻译：外文 → 中文；中文 → English / Japanese / Korean（自动复制）
-- **回话双行开关**：开 = 同时翻译为中文与外语（`[zh] @中文码` + `[en] 译文`）；关 = 只输出译文
+- **输出勾选**：中译中（`[zh] @中文码`）/ 中译英 / 两者同时（双行 `[en] 译文`），回话区与游戏码卡片各一组
 - **游戏聊天码**：中文 ↔ 游戏内 `@码`（`你好吗` → `[zh] @IH@E8@AP`），让游戏聊天里也能发中文
 - 术语表预替换：1200+ 条官方中英对照（地名 / 载具 / 物品 / 组织），可自行增删
 - 嘴臭模式开关（提示词切换，正常 ⇄ 嘴臭两套，用户可编辑）
@@ -79,16 +80,19 @@ SCTranslator\
 | 未覆盖的字 | 丢成一个空格（与原实现一致） |
 | 解码防误伤 | 严格按编码器不变式判定：码后必接空格，所以 `@Bob` 这类玩家名不会被拆成码 |
 
-**回话双行开关**（回话区复选框，设置项 `reply_dual_line`）：
+**输出勾选**（两个复选框，回话区与游戏聊天码卡片各一组，互不影响）：
 
-| 开关 | 回话结果 | 谁看得懂 |
-| --- | --- | --- |
-| **开**（同时翻译为中文与英文） | `[zh] @IH@E8@AP` ↲ `[en] How are you` | 中国玩家看第一行、外国玩家看第二行 |
-| **关**（默认，只翻译为外语） | `How are you` | 只有外国玩家 |
+| 中文码 | 英文/译文 | 输出 | 需要 API |
+| :---: | :---: | --- | --- |
+| ☑ | ☐ | `[zh] @IH@E8@AP`（中译中：只发中文，中国玩家看得懂） | 否（纯本地） |
+| ☐ | ☑ | `How are you`（中译英：只发外语） | 是 |
+| ☑ | ☑ | `[zh] @IH@E8@AP` ↲ `[en] How are you`（同时翻译，双方都看得懂） | 是 |
 
-目标语言为日语/韩语时标记随之变化（`[ja]` / `[ko]`）。若本机没有汉化码表，
-开启双行会自动退回"只输出译文"并在状态栏提示，不会发出半成品。默认关闭，
-勾选后写入 `data\settings.json`，下次启动保持。
+- 两项**至少勾一个**：取消最后一个会自动勾回并提示
+- 回话区的"译文"跟随目标语言（English/Japanese/Korean），标记随之变为 `[en]`/`[ja]`/`[ko]`
+- 勾选状态写入 `data\settings.json`（`reply_out_code` / `reply_out_foreign`、`gamecode_out_code` / `gamecode_out_en`），下次启动保持
+- 本机没有汉化码表时：只勾中文码会提示去装汉化；勾了中文码+译文则**自动退回只输出译文**并提示，不会发出半成品
+- 翻译失败/未配 API Key 时也会退化为只发中文码行，保证消息发得出去
 
 ## 提示词文件（可自行编辑）
 
@@ -142,7 +146,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 会守住这条底线：一旦导入图里出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.2.1-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.2.2-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 
@@ -176,7 +180,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 68 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 101 passed
 ```
 
 ```text
@@ -187,6 +191,7 @@ sc_translator/
   bootstrap.py        首次运行释放 prompts\ 与术语表
   prompts.py          提示词文件加载与回退
   glossary.py         术语表（专名预替换）
+  gamecode.py         游戏聊天码（码表解析 / 编码 / 解码）
   textutil.py         轻量文本工具（汉字占比）
   paths.py settings.py secrets.py logger_setup.py exchange_log.py
   translate/          缓存 + OpenAI 兼容客户端（批量/重试/思考模式关闭）

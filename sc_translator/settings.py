@@ -74,10 +74,13 @@ class Settings:
     reply_enabled: bool = False
     reply_target: str = "English"      # English / Japanese / Korean
     auto_copy_reply: bool = True
-    reply_dual_line: bool = False      # 开：中文码行 + 译文行；关：只输出译文
+    reply_out_code: bool = False       # 回话：输出中文码行（中译中）
+    reply_out_foreign: bool = True     # 回话：输出外文译文行（中译外）
     # ---- 游戏聊天码（中文 -> 游戏内 @码，需装带社区输入法支持的汉化）----
     gamecode_ini_path: str = ""        # 汉化后的 global.ini；留空自动检测
-    gamecode_auto_copy: bool = True    # 编码结果自动进剪贴板（便于游戏内 Ctrl+V）
+    gamecode_auto_copy: bool = True    # 结果自动进剪贴板（便于游戏内 Ctrl+V）
+    gamecode_out_code: bool = True     # 游戏码卡片：输出中文码行
+    gamecode_out_en: bool = False      # 游戏码卡片：输出英文译文行
     # ---- 界面 ----
     theme: str = "dark"
     log_level: str = "INFO"
@@ -108,6 +111,10 @@ class Settings:
                         if f.name == "chat_pattern" and getattr(merged, f.name) == LEGACY_CHAT_PATTERN:
                             continue
                         setattr(self, f.name, getattr(merged, f.name))
+                # 旧版单一"双行"开关（v0.2.1）升级为"中文码 + 外文"两个勾选
+                if data.get("reply_dual_line") is True:
+                    self.reply_out_code = True
+                    self.reply_out_foreign = True
             except Exception as exc:  # noqa: BLE001
                 log.warning("读取设置失败，使用默认值: %s", exc)
         return self

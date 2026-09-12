@@ -296,15 +296,19 @@ def _dual_ini(tmp_home):
     return ini
 
 
-def test_reply_dual_line_on_gives_chinese_and_english(qapp, tmp_home):
-    """开关打开：同时翻译为中文与英文——第一行中文码，第二行英文。"""
+def test_reply_output_code_plus_foreign(qapp, tmp_home):
+    """回话输出勾选「中文码 + 译文」：第一行中文码，第二行英文。"""
     from PySide6.QtWidgets import QApplication
 
-    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=True)
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path=str(_dual_ini(tmp_home)),
+        reply_out_code=True, reply_out_foreign=True,
+    )
     fake = _FakeClient(out="How are you")
     ctrl.make_client = lambda use_cache=True: fake
     win = ctrl.mainwin
-    assert win._dual_line.isChecked() is True, "设置里的开关应回填到界面"
+    assert win._reply_out_code.isChecked() and win._reply_out_foreign.isChecked()
     win._keyline.setText("sk-test")
     win._out_zh.setPlainText("你好吗")
     win._btn_reply.click()
@@ -317,11 +321,15 @@ def test_reply_dual_line_on_gives_chinese_and_english(qapp, tmp_home):
     ctrl.shutdown()
 
 
-def test_reply_dual_line_off_gives_english_only(qapp, tmp_home):
-    """开关关闭：只翻译为英文。"""
+def test_reply_output_foreign_only(qapp, tmp_home):
+    """回话输出只勾「译文」：只出英文，且不调用码表。"""
     from PySide6.QtWidgets import QApplication
 
-    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=False)
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path=str(_dual_ini(tmp_home)),
+        reply_out_code=False, reply_out_foreign=True,
+    )
     fake = _FakeClient(out="How are you")
     ctrl.make_client = lambda use_cache=True: fake
     win = ctrl.mainwin
@@ -334,16 +342,60 @@ def test_reply_dual_line_off_gives_english_only(qapp, tmp_home):
             break
     assert win._result_en.toPlainText() == "How are you"
     assert QApplication.clipboard().text() == "How are you"
-    assert "@" not in win._result_en.toPlainText()
     ctrl.shutdown()
 
 
-def test_reply_dual_line_falls_back_without_table(qapp, tmp_home, monkeypatch):
-    """开了双行但本机没有码表：退回只输出译文，并给出提示，不产生半成品。"""
+def test_reply_output_code_only_needs_no_api(qapp, tmp_home):
+    """回话输出只勾「中文码」（中译中）：纯本地编码，不填 Key 也能用、不联网。"""
+    from PySide6.QtWidgets import QApplication
+
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path=str(_dual_ini(tmp_home)),
+        reply_out_code=True, reply_out_foreign=False,
+    )
+    fake = _FakeClient(out="SHOULD-NOT-BE-USED")
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("")          # 故意不填 Key
+    win._out_zh.setPlainText("你好吗")
+    win._btn_reply.click()
+    _pump(qapp)
+    assert win._result_en.toPlainText() == "[zh] @IH@E8@AP"
+    assert QApplication.clipboard().text() == "[zh] @IH@E8@AP"
+    assert fake.calls == [], "只发中文码时不应调用翻译接口"
+    assert "Ctrl+V" in win._status.text(), win._status.text()
+    ctrl.shutdown()
+
+
+def test_reply_output_code_only_without_table_warns(qapp, tmp_home, monkeypatch):
+    """只勾中文码但本机没码表：提示去装汉化/指定文件，不输出垃圾。"""
+    from sc_translator import gamecode
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(gamecode, "autodetect", lambda roots=None: None, raising=False)
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path="", reply_out_code=True, reply_out_foreign=False,
+    )
+    win = ctrl.mainwin
+    win._out_zh.setPlainText("你好吗")
+    win._btn_reply.click()
+    _pump(qapp)
+    assert win._result_en.toPlainText() == ""
+    ctrl.shutdown()
+
+
+def test_reply_output_falls_back_without_table(qapp, tmp_home, monkeypatch):
+    """勾了中文码+译文但没码表：退回只输出译文，并给出提示。"""
     from sc_translator import gamecode
 
     monkeypatch.setattr(gamecode, "autodetect", lambda roots=None: None, raising=False)
-    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path="", reply_dual_line=True)
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path="", reply_out_code=True, reply_out_foreign=True,
+    )
     fake = _FakeClient(out="How are you")
     ctrl.make_client = lambda use_cache=True: fake
     win = ctrl.mainwin
@@ -359,19 +411,93 @@ def test_reply_dual_line_falls_back_without_table(qapp, tmp_home, monkeypatch):
     ctrl.shutdown()
 
 
-def test_reply_dual_line_persists_and_marks_japanese(qapp, tmp_home):
-    """开关落盘；目标语言为日语时标记为 [ja]。"""
+def test_reply_output_checkboxes_persist_and_mark_japanese(qapp, tmp_home):
+    """勾选落盘；目标语言日语时标记为 [ja]；两个都取消会保留一项。"""
     from sc_translator.settings import Settings
 
-    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=False)
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        gamecode_ini_path=str(_dual_ini(tmp_home)),
+        reply_out_code=False, reply_out_foreign=True,
+    )
     win = ctrl.mainwin
-    win._dual_line.setChecked(True)
+    win._reply_out_code.setChecked(True)
     _pump(qapp)
-    assert Settings().load().reply_dual_line is True
+    saved = Settings().load()
+    assert saved.reply_out_code is True and saved.reply_out_foreign is True
     win._reply_target.setCurrentText("Japanese")
     text, note = win._compose_reply("你好", "Japanese", "こんにちは")
     assert text == "[zh] @IH@E8\n[ja] こんにちは", text
     assert note == ""
+    # 想两个都取消 -> 自动保留一项，并提示
+    win._reply_out_foreign.setChecked(False)
+    win._reply_out_code.setChecked(False)
+    _pump(qapp)
+    assert win._reply_out_code.isChecked() or win._reply_out_foreign.isChecked()
+    assert "至少保留一项" in win._status.text(), win._status.text()
+    ctrl.shutdown()
+
+
+def test_gamecode_card_three_combinations(qapp, tmp_home):
+    """卡片三种组合：只中文码（离线）/ 只英文 / 中文码+英文（双行）。"""
+    from PySide6.QtWidgets import QApplication
+
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)))
+    fake = _FakeClient(out="How are you")
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._gc_autocopy.setChecked(False)
+    win._gc_in.setPlainText("你好吗")
+
+    # 1) 默认：只中文码，纯本地
+    assert win._gc_out_code.isChecked() and not win._gc_out_en.isChecked()
+    assert win._btn_gc_encode.text() == "编码并复制"
+    QApplication.clipboard().setText("")
+    win._btn_gc_encode.click()
+    _pump(qapp)
+    assert win._gc_out.toPlainText() == "[zh] @IH@E8@AP"
+    assert fake.calls == [], "只中文码不应调用 API"
+
+    # 2) 只英文（先勾英文，再取消中文码——避免中间态两个都空）
+    win._gc_out_en.setChecked(True)
+    win._gc_out_code.setChecked(False)
+    _pump(qapp)
+    assert win._btn_gc_encode.text() == "翻译为英文并复制"
+    win._gc_in.setPlainText("你好吗")     # 触发一次 textChanged，只英文不应改动右侧预览
+    _pump(qapp)
+    win._btn_gc_encode.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._gc_busy:
+            break
+    assert win._gc_out.toPlainText() == "How are you"
+    assert QApplication.clipboard().text() == "How are you"
+
+    # 3) 中文码 + 英文
+    win._gc_out_code.setChecked(True)
+    _pump(qapp)
+    assert win._btn_gc_encode.text() == "生成双行并复制"
+    win._btn_gc_encode.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._gc_busy:
+            break
+    assert win._gc_out.toPlainText() == "[zh] @IH@E8@AP\n[en] How are you"
+    assert QApplication.clipboard().text() == "[zh] @IH@E8@AP\n[en] How are you"
+    ctrl.shutdown()
+
+
+def test_gamecode_card_code_only_without_api_key(qapp, tmp_home):
+    """卡片只勾中文码时，没有 API Key 也能正常出码。"""
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)))
+    win = ctrl.mainwin
+    win._keyline.setText("")
+    win._gc_autocopy.setChecked(False)
+    win._gc_in.setPlainText("你好")
+    win._btn_gc_encode.click()
+    _pump(qapp)
+    assert win._gc_out.toPlainText() == "[zh] @IH@E8"
     ctrl.shutdown()
 
 
