@@ -177,6 +177,15 @@ class MainWindow(QMainWindow):
         row2.addStretch(1)
         lay2.addLayout(row2)
 
+        self._dual_line = QCheckBox("双行：中文码 + 译文")
+        self._dual_line.setChecked(bool(self.app.settings.reply_dual_line))
+        self._dual_line.setToolTip(
+            "开：同时翻译为中文与目标语言——第一行是游戏内中文码（[zh] @…，中国玩家看得懂），"
+            "第二行是译文（外国玩家看得懂）。\n关：只输出译文。"
+        )
+        self._dual_line.toggled.connect(self._on_dual_line_toggled)
+        lay2.addWidget(self._dual_line)
+
         lay2.addWidget(QLabel("译文（只读，可选中复制）"))
         self._result_en = QPlainTextEdit()
         self._result_en.setReadOnly(True)
@@ -591,13 +600,45 @@ class MainWindow(QMainWindow):
             )
 
         def post(ok, val):
-            if ok:
-                self._result_en.setPlainText(val)
-                self._copy_result()
-            else:
+            if not ok:
                 self._show_fail(val)
+                return
+            composed, note = self._compose_reply(text, target, val)
+            self._result_en.setPlainText(composed)
+            self._copy_result()
+            if note:
+                self._set_status(note)
 
         self._run_async(work, "翻译中…", extra=post)
+
+    # ---------------- 双行输出（中文码 + 译文）----------------
+    _LANG_MARK = {"English": "en", "Japanese": "ja", "Korean": "ko"}
+
+    def _on_dual_line_toggled(self, on: bool) -> None:
+        self.app.settings.reply_dual_line = bool(on)
+        self.app.settings.save()
+        self._set_status(
+            "双行模式：中文码 + 译文" if on else "单行模式：只输出译文"
+        )
+
+    def _compose_reply(self, zh_text: str, target: str, translation: str) -> tuple[str, str]:
+        """按开关拼装回话结果。
+
+        开：``[zh] @中文码`` + 换行 + ``[en] 译文``（中国玩家看第一行、外国玩家看第二行）
+        关：只输出译文。
+        码表缺失时自动退回"只输出译文"，并给出提示。
+        """
+        if not self._dual_line.isChecked():
+            return translation, ""
+        from .. import gamecode
+
+        if not gamecode.configured():
+            return translation, "⚠ 未找到汉化码表，本次只输出译文（双行需要码表）"
+        code_line = gamecode.encode(zh_text)
+        if not code_line:
+            return translation, "⚠ 没有可编码的中文，本次只输出译文"
+        mark = self._LANG_MARK.get(target, "en")
+        return f"{code_line}\n[{mark}] {translation}", ""
 
     def _run_async(self, work, status: str, extra=None) -> None:
         self._busy = True

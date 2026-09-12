@@ -284,6 +284,97 @@ def test_spicy_checkbox_persists_to_settings(qapp, tmp_home):
     ctrl.shutdown()
 
 
+def _dual_ini(tmp_home):
+    ini = tmp_home / "global.ini"
+    ini.parent.mkdir(parents=True, exist_ok=True)
+    ini.write_text(
+        "_starcitizen_doctor_localization_community_input_method_version=1.2.3\n"
+        "IH=你\nE8=好\nAP=吗\n100=测\n"
+        "_starcitizen_doctor_localization_version=4.2.0\n",
+        encoding="utf-8",
+    )
+    return ini
+
+
+def test_reply_dual_line_on_gives_chinese_and_english(qapp, tmp_home):
+    """开关打开：同时翻译为中文与英文——第一行中文码，第二行英文。"""
+    from PySide6.QtWidgets import QApplication
+
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=True)
+    fake = _FakeClient(out="How are you")
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    assert win._dual_line.isChecked() is True, "设置里的开关应回填到界面"
+    win._keyline.setText("sk-test")
+    win._out_zh.setPlainText("你好吗")
+    win._btn_reply.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert win._result_en.toPlainText() == "[zh] @IH@E8@AP\n[en] How are you"
+    assert QApplication.clipboard().text() == "[zh] @IH@E8@AP\n[en] How are you"
+    ctrl.shutdown()
+
+
+def test_reply_dual_line_off_gives_english_only(qapp, tmp_home):
+    """开关关闭：只翻译为英文。"""
+    from PySide6.QtWidgets import QApplication
+
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=False)
+    fake = _FakeClient(out="How are you")
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._out_zh.setPlainText("你好吗")
+    win._btn_reply.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert win._result_en.toPlainText() == "How are you"
+    assert QApplication.clipboard().text() == "How are you"
+    assert "@" not in win._result_en.toPlainText()
+    ctrl.shutdown()
+
+
+def test_reply_dual_line_falls_back_without_table(qapp, tmp_home, monkeypatch):
+    """开了双行但本机没有码表：退回只输出译文，并给出提示，不产生半成品。"""
+    from sc_translator import gamecode
+
+    monkeypatch.setattr(gamecode, "autodetect", lambda roots=None: None, raising=False)
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path="", reply_dual_line=True)
+    fake = _FakeClient(out="How are you")
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._out_zh.setPlainText("你好吗")
+    win._btn_reply.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert win._result_en.toPlainText() == "How are you"
+    assert "只输出译文" in win._status.text(), win._status.text()
+    ctrl.shutdown()
+
+
+def test_reply_dual_line_persists_and_marks_japanese(qapp, tmp_home):
+    """开关落盘；目标语言为日语时标记为 [ja]。"""
+    from sc_translator.settings import Settings
+
+    ctrl = _mk_ctrl(qapp, tmp_home, gamecode_ini_path=str(_dual_ini(tmp_home)), reply_dual_line=False)
+    win = ctrl.mainwin
+    win._dual_line.setChecked(True)
+    _pump(qapp)
+    assert Settings().load().reply_dual_line is True
+    win._reply_target.setCurrentText("Japanese")
+    text, note = win._compose_reply("你好", "Japanese", "こんにちは")
+    assert text == "[zh] @IH@E8\n[ja] こんにちは", text
+    assert note == ""
+    ctrl.shutdown()
+
+
 def test_translate_failure_shows_status(qapp, tmp_home, monkeypatch):
     """失败路径：API 报错时状态栏提示失败，且不把错误写进译文区。"""
     from sc_translator.translate.client import ApiError
