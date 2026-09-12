@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+build/
+dist/
+data/
+logs/
+*.log
+tools/_out/
+
+# DSH AgentTeams 运行态（不发布）
+.agent-teams/

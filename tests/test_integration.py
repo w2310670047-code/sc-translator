@@ -1,0 +1,260 @@
+"""集成冒烟：真实 RapidOCR + 合成游戏截图 + GUI 组装（offscreen）。
+
+不发起真实翻译请求；RapidOCR 首次运行加载模型可能需要数秒。
+"""
+
+from __future__ import annotations
+
+import os
+
+import numpy as np
+import pytest
+
+from sc_translator.ocr import OcrEngine, normalize_text
+
+# 允许在无交互桌面的环境跳过
+pytestmark = pytest.mark.skipif(os.environ.get("SC_CI_SKIP_GUI", "") == "1", reason="环境跳过")
+
+_IMG_TEXT = [
+    "Quantum travel to Crusader",
+    "Bounty mission updated",
+    "Arrive at OM-1 marker",
+]
+
+
+def _synthetic_screenshot() -> np.ndarray:
+    from PIL import Image, ImageDraw, ImageFont
+
+    w, h = 760, 200
+    img = Image.new("RGB", (w, h), (16, 19, 26))
+    d = ImageDraw.Draw(img)
+    font = None
+    for cand in (r"C:\Windows\Fonts\segoeui.ttf", r"C:\Windows\Fonts\arial.ttf", r"C:\Windows\Fonts\calibri.ttf"):
+        if os.path.exists(cand):
+            try:
+                font = ImageFont.truetype(cand, 26)
+                break
+            except Exception:
+                continue
+    y = 14
+    for line in _IMG_TEXT:
+        d.text((16, y), line, fill=(224, 230, 238), font=font or ImageFont.load_default())
+        y += 44
+    # 返回 BGR ndarray（模拟 mss 输出）
+    return np.asarray(img)[:, :, ::-1].copy()
+
+
+def test_rapidocr_reads_synthetic_game_text(tmp_home):
+    engine = OcrEngine()
+    bgr = _synthetic_screenshot()
+    lines = engine.recognize(bgr)
+    assert len(lines) >= 2, f"OCR 行数过少: {lines}"
+    joined = " ".join(l.normalized() for l in lines).lower()
+    # 宽松断言：至少能读出主要单词中的一部分
+    hits = sum(1 for word in ("quantum", "travel", "crusader", "bounty", "mission", "arrive", "marker") if word in joined)
+    assert hits >= 2, f"OCR 识别内容与期望偏差较大: {joined}"
+
+
+def test_full_pipeline_headless():
+    """Pipeline + 假翻译：合成截图行 -> 稳定 -> 翻译回填。"""
+    from sc_translator.ocr import OcrEngine
+    from sc_translator.pipeline import Pipeline, PipelineSettings
+
+    engine = OcrEngine()
+    bgr = _synthetic_screenshot()
+    lines = engine.recognize(bgr)
+
+    ps = PipelineSettings(stable_frames=1)
+    p = Pipeline(ps)
+    p.feed(lines)  # stable_frames=1 -> 直接提交
+    p.feed(lines)  # 第二次帧也相同
+    assert p.visible_entries(), "没有稳定行提交"
+    # 假翻译
+    fake = {"Quantum travel to crusader": "量子跃迁至克雷瑟"}
+    for norm in p.pending_texts():
+        out = fake.get(norm.lower(), f"译文:{norm}")
+        p.apply_translation(norm, out)
+    snap = p.snapshot()
+    assert any(e["pending"] is False and e["translated"] for e in snap)
+
+
+def _qt_app():
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    return app
+
+
+# qapp fixture 由 tests/conftest.py 统一提供（会话级）
+
+
+def test_region_select_construct(qapp):
+    """回归：Qt6 下 RegionSelect 不再引用已删除的枚举，可正常创建/显示。"""
+    from sc_translator.ui.region_select import RegionSelect
+
+    win = RegionSelect()
+    try:
+        win.show()
+        assert win.geometry().width() > 0 and win.geometry().height() > 0
+    finally:
+        win.close()
+
+
+def _pump(qapp, n=6):
+    for _ in range(n):
+        qapp.processEvents()
+        import time
+
+        time.sleep(0.01)
+
+
+def _mk_ctrl(qapp, tmp_home, **kw):
+    from sc_translator.app import AppController
+    from sc_translator.settings import Settings
+
+    s = Settings().load()
+    s.theme = "dark"
+    for k, v in kw.items():
+        setattr(s, k, v)
+    s.save()
+    ctrl = AppController(qapp, settings=s)
+    ctrl.init_ui()
+    return ctrl
+
+
+class _FakeClient:
+    """替身：不联网，记录调用参数，返回可预测的译文。"""
+
+    def __init__(self, out=None, fail=None):
+        from sc_translator.translate.client import ClientOptions
+
+        self.opts = ClientOptions(model="fake")
+        self._out = out
+        self._fail = fail
+        self.calls = []
+
+    def translate_lines_batch(self, lines, source_lang="auto", target_lang="en", keep_chat_prefix=False):
+        self.calls.append(("batch", list(lines), source_lang, target_lang))
+        if self._fail:
+            raise self._fail
+        return self._out or [f"[zh]{x}" for x in lines]
+
+    def translate_reply(self, text, target_lang, spicy=False):
+        self.calls.append(("reply", text, target_lang, spicy))
+        if self._fail:
+            raise self._fail
+        return self._out if self._out is not None else f"[{target_lang}]{text}"
+
+
+def test_text_translator_ui_assembly(qapp, tmp_home):
+    """纯文本翻译器：双语输入区/结果区齐备，且屏幕翻译相关控件已移除。"""
+    ctrl = _mk_ctrl(qapp, tmp_home)
+    win = ctrl.mainwin
+    assert win is not None
+    assert ctrl.overlay is None, "悬浮窗已下线，不应再构建 overlay"
+    assert hasattr(win, "_in_en") and hasattr(win, "_out_zh")
+    assert hasattr(win, "_result_en") and hasattr(win, "_spicy")
+    assert win._reply_target.count() >= 3, "目标语言应含英语/日语/韩语"
+    # 屏幕翻译遗留控件不再出现在主窗口
+    from PySide6.QtWidgets import QPushButton
+
+    texts = [b.text() for b in win.findChildren(QPushButton)]
+    assert not any("开始" in t or "停止" in t for t in texts), texts
+    ctrl.shutdown()
+
+
+def test_translate_to_chinese_click_writes_result(qapp, tmp_home):
+    """点按路径：输入外文 → 点按钮 → 结果区显示中文（替身客户端，不联网）。"""
+    ctrl = _mk_ctrl(qapp, tmp_home)
+    fake = _FakeClient()
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._in_en.setPlainText("Quantum travel\nBounty")
+    win._btn_tr.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert fake.calls and fake.calls[0][0] == "batch", fake.calls
+    assert fake.calls[0][3] == "zh-CN"
+    assert win._result_en.toPlainText() == "[zh]Quantum travel\n[zh]Bounty"
+    ctrl.shutdown()
+
+
+def test_reply_click_copies_and_uses_spicy(qapp, tmp_home):
+    """回话路径：中文 → 目标语言，结果写入结果区并自动复制；嘴臭开关透传到请求。"""
+    from PySide6.QtWidgets import QApplication
+
+    ctrl = _mk_ctrl(qapp, tmp_home, spicy_mode=True)
+    fake = _FakeClient()
+    ctrl.make_client = lambda use_cache=True: fake
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._out_zh.setPlainText("你好")
+    win._btn_reply.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert fake.calls and fake.calls[0][0] == "reply", fake.calls
+    assert fake.calls[0][1] == "你好"
+    assert fake.calls[0][2] == win._reply_target.currentText()
+    assert fake.calls[0][3] is True, "开启嘴臭模式时应以 spicy=True 调用"
+    assert win._result_en.toPlainText() == "[English]你好"
+    assert QApplication.clipboard().text() == "[English]你好", "回话结果应自动进剪贴板"
+    ctrl.shutdown()
+
+
+def test_spicy_checkbox_persists_to_settings(qapp, tmp_home):
+    """嘴臭模式：主窗口复选框与设置项双向一致并落盘。"""
+    from sc_translator.settings import Settings
+
+    ctrl = _mk_ctrl(qapp, tmp_home, spicy_mode=False)
+    win = ctrl.mainwin
+    assert win._spicy.isChecked() is False
+    win._spicy.setChecked(True)
+    _pump(qapp)
+    assert ctrl.settings.spicy_mode is True
+    assert Settings().load().spicy_mode is True, "开关必须落盘，重启后仍生效"
+    win._spicy.setChecked(False)
+    _pump(qapp)
+    assert Settings().load().spicy_mode is False
+    ctrl.shutdown()
+
+
+def test_translate_failure_shows_status(qapp, tmp_home, monkeypatch):
+    """失败路径：API 报错时状态栏提示失败，且不把错误写进译文区。"""
+    from sc_translator.translate.client import ApiError
+    from PySide6.QtWidgets import QMessageBox
+
+    ctrl = _mk_ctrl(qapp, tmp_home)
+    fake = _FakeClient(fail=ApiError("模型返回了空内容（已禁用思维链）"))
+    ctrl.make_client = lambda use_cache=True: fake
+    monkeypatch.setattr(QMessageBox, "warning", staticmethod(lambda *a, **k: None))
+    win = ctrl.mainwin
+    win._keyline.setText("sk-test")
+    win._in_en.setPlainText("Quantum travel")
+    win._btn_tr.click()
+    for _ in range(80):
+        _pump(qapp, 1)
+        if not win._busy:
+            break
+    assert "失败" in win._status.text(), win._status.text()
+    assert "空内容" in win._status.text(), win._status.text()
+    assert win._result_en.toPlainText() == ""
+    ctrl.shutdown()
+
+
+def test_screen_capture_probe():
+    """真实环境抓屏冒烟：能抓到非空帧即可（无游戏时抓桌面）。"""
+    try:
+        from sc_translator.screen import ScreenCapture
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"mss 不可用: {exc}")
+    cap = ScreenCapture()
+    try:
+        shot = cap.grab({"left": 0, "top": 0, "width": 320, "height": 180})
+        assert shot is not None and shot.size > 0 and shot.shape[2] == 3
+    finally:
+        cap.close()
