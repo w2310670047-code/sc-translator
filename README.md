@@ -184,7 +184,7 @@ OCR 栈是**懒加载**的，不进启动路径，因此冷启动仍是约 1 秒
 	ests/test_packaging.py 会守住这条底线：启动导入图里一旦出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.4.1-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.4.2-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 

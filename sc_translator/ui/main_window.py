@@ -32,7 +32,7 @@ from .. import i18n
 from ..i18n import t
 from ..paths import logs_dir
 from ..settings import PROVIDER_PRESETS
-from .widgets import KeyLine, make_card
+from .widgets import HotkeyEdit, KeyLine, make_card
 
 log = logging.getLogger(__name__)
 
@@ -307,14 +307,17 @@ class MainWindow(QMainWindow):
         self._snap_enable.toggled.connect(self._on_snap_enabled)
         srow.addWidget(self._snap_enable)
         srow.addWidget(QLabel(t("snap.key_label")))
-        self._snap_key = QLineEdit(s.snap_hotkey)
-        self._snap_key.setFixedWidth(90)
-        self._snap_key.editingFinished.connect(self._on_snap_keys_changed)
+        # 点一下直接按组合键录入；录入期间临时注销全局热键，避免按键本身触发动作
+        self._snap_key = HotkeyEdit(
+            s.snap_hotkey, on_edit_start=self._begin_hotkey_edit, on_edit_done=self._on_snap_keys_changed
+        )
+        self._snap_key.setFixedWidth(130)
         srow.addWidget(self._snap_key)
         srow.addWidget(QLabel(t("snap.key_select_label")))
-        self._snap_key2 = QLineEdit(s.snap_hotkey_select)
-        self._snap_key2.setFixedWidth(90)
-        self._snap_key2.editingFinished.connect(self._on_snap_keys_changed)
+        self._snap_key2 = HotkeyEdit(
+            s.snap_hotkey_select, on_edit_start=self._begin_hotkey_edit, on_edit_done=self._on_snap_keys_changed
+        )
+        self._snap_key2.setFixedWidth(130)
         srow.addWidget(self._snap_key2)
         self._btn_snap_now = QPushButton(t("snap.btn_now"))
         self._btn_snap_now.clicked.connect(self.on_snap_hotkey)
@@ -353,6 +356,7 @@ class MainWindow(QMainWindow):
         self._snap_busy = False
         self._picker = None
         self._popup = None
+        self._shutting_down = False
         self._refresh_gamecode_state()
         self._refresh_gc_mode()
         self._refresh_snap_state()
@@ -383,8 +387,8 @@ class MainWindow(QMainWindow):
         self._snap_state.setText(state)
         self._snap_state.setStyleSheet("color:#f5b83d;" if warn else "")
         self._snap_enable.setChecked(bool(s.snap_enabled))
-        self._snap_key.setText(s.snap_hotkey)
-        self._snap_key2.setText(s.snap_hotkey_select)
+        self._snap_key.setSpec(s.snap_hotkey)
+        self._snap_key2.setSpec(s.snap_hotkey_select)
 
     def _on_snap_enabled(self, on: bool) -> None:
         self.app.settings.snap_enabled = bool(on)
@@ -399,23 +403,71 @@ class MainWindow(QMainWindow):
             self._set_status(t("snap.status_off"))
         self._refresh_snap_state()
 
+    # ---- 热键录入 ----
+    def _begin_hotkey_edit(self) -> None:
+        """进入录入态：先注销全局热键，否则用户按下的就是旧热键（会真的去截图/弹框选）。"""
+        if self._shutting_down:
+            return
+        log.info("开始录入热键：临时注销全局热键")
+        self.app.suspend_hotkeys()
+        self._set_status(t("snap.recording"))
+
     def _on_snap_keys_changed(self) -> None:
+        """录入结束：校验 -> 落盘 -> 重新注册；失败则回滚到原来的可用组合。"""
+        if self._shutting_down:
+            return          # 关窗/销毁过程中失焦会走到这里，直接跳过
+        try:
+            self._apply_snap_keys()
+        except RuntimeError as exc:
+            # 窗口（C++ 侧）已销毁时，延迟回调仍可能走到这里
+            log.debug("窗口已销毁，跳过热键应用: %s", exc)
+
+    def _apply_snap_keys(self) -> None:
         from ..snapshot import parse_hotkey
 
         s = self.app.settings
-        ok = True
-        for line, attr in ((self._snap_key, "snap_hotkey"), (self._snap_key2, "snap_hotkey_select")):
-            spec = line.text().strip() or getattr(s, attr)
+        old = (s.snap_hotkey, s.snap_hotkey_select)
+        new = (self._snap_key.spec().strip(), self._snap_key2.spec().strip())
+
+        # 1) 格式校验
+        for spec in new:
             if parse_hotkey(spec) is None:
-                QMessageBox.warning(self, t("dlg.notice"), t("snap.bad_key", spec=spec))
-                ok = False
-                continue
-            setattr(s, attr, spec)
+                self._revert_hotkeys(old, t("snap.bad_key", spec=spec))
+                return
+        # 2) 不允许两个热键相同（同一个组合只能注册一次）
+        if new[0] == new[1]:
+            self._revert_hotkeys(old, t("snap.same_key", spec=new[0]))
+            return
+
+        s.snap_hotkey, s.snap_hotkey_select = new
         s.save()
-        self._refresh_snap_state()
-        if ok and s.snap_enabled:
-            self.app.install_hotkeys()
+        if not s.snap_enabled:
+            self._set_status(t("snap.status_off"))
+            self._refresh_snap_state()
+            return
+
+        count = self.app.install_hotkeys()
+        if count == 2:
             self._set_status(t("snap.status_rebind"))
+        elif count == 1:
+            failed = t("snap.key_label") if not self.app.hotkey_ok.get("capture") else t("snap.key_select_label")
+            self._set_status(t("snap.partial_fail", which=failed))
+        else:
+            # 全失败：把上次可用的组合改回去并重新注册，别让用户"一个热键都没有"
+            self._revert_hotkeys(old, t("snap.status_fail"), reinstall=True)
+            return
+        self._refresh_snap_state()
+
+    def _revert_hotkeys(self, old: tuple[str, str], note: str, reinstall: bool = True) -> None:
+        s = self.app.settings
+        s.snap_hotkey, s.snap_hotkey_select = old
+        s.save()
+        log.warning("热键设置未生效（%s），回滚为 %s / %s", note, old[0], old[1])
+        if reinstall and s.snap_enabled:
+            self.app.install_hotkeys()
+        self._refresh_snap_state()
+        self._set_status(note)
+        QMessageBox.warning(self, t("dlg.notice"), note)
 
     def on_snap_hotkey(self) -> None:
         """热键：抓取记住的区域 -> OCR -> 翻译 -> 浮窗 + 主窗口。"""
@@ -830,6 +882,9 @@ class MainWindow(QMainWindow):
     def _copy_text(self, text: str, tip: str) -> None:
         from PySide6.QtWidgets import QApplication
 
+        # 任何"显式复制"都要先取消游戏码卡片的防抖自动复制，
+        # 否则 0.8 秒后它会把剪贴板覆盖成旧内容（真实踩到过：回话刚复制完就被顶掉）。
+        self._gc_timer_stop()
         QApplication.clipboard().setText(text)
         self._set_status(tip)
 
@@ -1137,5 +1192,13 @@ class MainWindow(QMainWindow):
             subprocess.Popen(["explorer", str(logs_dir())])
 
     def closeEvent(self, ev: QCloseEvent) -> None:
+        # 先标记关闭中：热键录入框失焦会回调到本窗口，此时窗口可能已在销毁
+        self._shutting_down = True
+        self._gc_timer_stop()
+        try:
+            if self._popup is not None:
+                self._popup.hide_popup()
+        except Exception:  # noqa: BLE001
+            pass
         self.app.shutdown()
         super().closeEvent(ev)

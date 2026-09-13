@@ -51,6 +51,7 @@ class AppController:
         # 按需截图翻译服务（热键触发；重型依赖在里面懒加载）
         self._snap = None
         self.hotkeys = None
+        self.hotkey_ok = {"capture": False, "select": False}
 
         # 术语表（专名预替换）
         self.apply_glossary()
@@ -209,36 +210,63 @@ class AppController:
             self._snap = SnapshotService(self)
         return self._snap
 
-    def install_hotkeys(self) -> bool:
-        """注册全局热键（F9 截图翻译 / F10 重框）。窗口重建后需重新调用。"""
+    def install_hotkeys(self) -> int:
+        """注册全局热键（截图 / 重框），返回**成功注册的个数**。
+
+        - 全部失败时 ``self.hotkeys`` 保持 None，界面据此给出黄字提示；
+        - 逐键记录结果到 ``self.hotkey_ok``（{"capture": bool, "select": bool}），
+          这样"只成功一个"也能如实显示，而不是笼统说"已更新"。
+        """
+        self.hotkey_ok = {"capture": False, "select": False}
         if not self.settings.snap_enabled:
-            return False
+            return 0
         if self.mainwin is None:
-            return False
+            return 0
         from .hotkeys import HotkeyService
         from .snapshot import parse_hotkey
 
         self.remove_hotkeys()
-        svc = HotkeyService(int(self.mainwin.winId()))
-        svc.install()
-        ok_any = False
+        try:
+            svc = HotkeyService(int(self.mainwin.winId()))
+            svc.install()
+        except RuntimeError as exc:
+            # 窗口正在销毁（关窗时焦点变化会走到这里），静默跳过
+            log.debug("窗口不可用，跳过热键注册: %s", exc)
+            return 0
         spec = parse_hotkey(self.settings.snap_hotkey)
         if spec:
-            ok_any |= svc.add(0x5101, spec[0], spec[1], self.mainwin.on_snap_hotkey)
+            self.hotkey_ok["capture"] = svc.add(0x5101, spec[0], spec[1], self.mainwin.on_snap_hotkey)
         spec2 = parse_hotkey(self.settings.snap_hotkey_select)
         if spec2:
-            ok_any |= svc.add(0x5102, spec2[0], spec2[1], self.mainwin.on_snap_select_hotkey)
-        self.hotkeys = svc
-        if ok_any:
-            log.info("全局热键注册：截图 %s / 重框 %s → 成功",
-                     self.settings.snap_hotkey, self.settings.snap_hotkey_select)
+            self.hotkey_ok["select"] = svc.add(0x5102, spec2[0], spec2[1], self.mainwin.on_snap_select_hotkey)
+
+        count = sum(1 for v in self.hotkey_ok.values() if v)
+        if count:
+            self.hotkeys = svc
+            log.info(
+                "全局热键注册：截图 %s（%s）/ 重框 %s（%s）",
+                self.settings.snap_hotkey, "成功" if self.hotkey_ok["capture"] else "失败",
+                self.settings.snap_hotkey_select, "成功" if self.hotkey_ok["select"] else "失败",
+            )
         else:
+            self.hotkeys = None
+            try:
+                svc.remove()
+            except Exception:  # noqa: BLE001
+                pass
             log.warning(
                 "全局热键注册失败：截图 %s / 重框 %s —— 常见原因是本程序已有另一个实例在运行"
                 "（先退出它），或热键被其它软件占用（改用别的键）",
                 self.settings.snap_hotkey, self.settings.snap_hotkey_select,
             )
-        return ok_any
+        return count
+
+    def suspend_hotkeys(self) -> None:
+        """临时注销热键（用户正在录入新热键时，避免按键本身触发动作）。"""
+        self.remove_hotkeys()
+
+    def resume_hotkeys(self) -> int:
+        return self.install_hotkeys()
 
     def remove_hotkeys(self) -> None:
         if self.hotkeys is not None:

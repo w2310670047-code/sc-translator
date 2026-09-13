@@ -181,7 +181,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 會守住這條底線：一旦匯入圖出現重量級相依，測試直接失敗。
 
 發佈到 GitHub：雙擊 `publish.bat`（設定 origin → 推送 `main` → 複製發行說明到剪貼簿並開啟 Release 頁面），
-再把 `dist\SCTranslator-v0.4.1-win64.zip` 拖進 Release 附件區即可。
+再把 `dist\SCTranslator-v0.4.2-win64.zip` 拖進 Release 附件區即可。
 
 ## 設定與資料
 

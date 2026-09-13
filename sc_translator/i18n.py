@@ -358,6 +358,21 @@ _T: dict[str, tuple[str, str, str]] = {
         "{spec} 不是有效的熱鍵（範例：F9 / Ctrl+Shift+S）",
         "{spec} is not a valid hotkey (e.g. F9 / Ctrl+Shift+S)",
     ),
+    "snap.recording": (
+        "请在热键框里按组合键（Esc 取消）…",
+        "請在熱鍵框裡按組合鍵（Esc 取消）…",
+        "Press the key combination in the hotkey box (Esc to cancel)…",
+    ),
+    "snap.same_key": (
+        "两个热键不能相同（{spec}）",
+        "兩個熱鍵不能相同（{spec}）",
+        "The two hotkeys must differ ({spec})",
+    ),
+    "snap.partial_fail": (
+        "{which} 的热键注册失败（可能被其它软件或另一个实例占用），另一个已生效",
+        "{which} 的熱鍵註冊失敗（可能被其它軟體或另一個實例佔用），另一個已生效",
+        "The hotkey for {which} could not be registered (taken by another app or instance); the other one is active",
+    ),
     "snap.copied": ("截图翻译结果已复制", "截圖翻譯結果已複製", "Screenshot translation copied"),
     "snap.popup_title": ("截图翻译", "截圖翻譯", "Screenshot translation"),
     "snap.popup_pin": ("固定", "固定", "Pin"),

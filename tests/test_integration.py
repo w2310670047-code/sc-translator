@@ -172,10 +172,7 @@ def test_translate_to_chinese_click_writes_result(qapp, tmp_home):
     win._keyline.setText("sk-test")
     win._in_en.setPlainText("Quantum travel\nBounty")
     win._btn_tr.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert fake.calls and fake.calls[0][0] == "batch", fake.calls
     assert fake.calls[0][3] == "zh-CN"
     assert win._result_en.toPlainText() == "[zh]Quantum travel\n[zh]Bounty"
@@ -193,10 +190,7 @@ def test_reply_click_copies_and_uses_spicy(qapp, tmp_home):
     win._keyline.setText("sk-test")
     win._out_zh.setPlainText("你好")
     win._btn_reply.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert fake.calls and fake.calls[0][0] == "reply", fake.calls
     assert fake.calls[0][1] == "你好"
     assert fake.calls[0][2] == win._reply_target.currentText()
@@ -312,10 +306,7 @@ def test_reply_output_code_plus_foreign(qapp, tmp_home):
     win._keyline.setText("sk-test")
     win._out_zh.setPlainText("你好吗")
     win._btn_reply.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert win._result_en.toPlainText() == "[zh] @IH@E8@AP\n[en] How are you"
     assert QApplication.clipboard().text() == "[zh] @IH@E8@AP\n[en] How are you"
     ctrl.shutdown()
@@ -336,10 +327,7 @@ def test_reply_output_foreign_only(qapp, tmp_home):
     win._keyline.setText("sk-test")
     win._out_zh.setPlainText("你好吗")
     win._btn_reply.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert win._result_en.toPlainText() == "How are you"
     assert QApplication.clipboard().text() == "How are you"
     ctrl.shutdown()
@@ -402,10 +390,7 @@ def test_reply_output_falls_back_without_table(qapp, tmp_home, monkeypatch):
     win._keyline.setText("sk-test")
     win._out_zh.setPlainText("你好吗")
     win._btn_reply.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert win._result_en.toPlainText() == "How are you"
     assert "只输出译文" in win._status.text(), win._status.text()
     ctrl.shutdown()
@@ -467,10 +452,7 @@ def test_gamecode_card_three_combinations(qapp, tmp_home):
     win._gc_in.setPlainText("你好吗")     # 触发一次 textChanged，只英文不应改动右侧预览
     _pump(qapp)
     win._btn_gc_encode.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._gc_busy:
-            break
+    _wait_flag(qapp, lambda: win._gc_busy)
     assert win._gc_out.toPlainText() == "How are you"
     assert QApplication.clipboard().text() == "How are you"
 
@@ -479,10 +461,7 @@ def test_gamecode_card_three_combinations(qapp, tmp_home):
     _pump(qapp)
     assert win._btn_gc_encode.text() == "生成双行并复制"
     win._btn_gc_encode.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._gc_busy:
-            break
+    _wait_flag(qapp, lambda: win._gc_busy)
     assert win._gc_out.toPlainText() == "[zh] @IH@E8@AP\n[en] How are you"
     assert QApplication.clipboard().text() == "[zh] @IH@E8@AP\n[en] How are you"
     ctrl.shutdown()
@@ -514,10 +493,7 @@ def test_translate_failure_shows_status(qapp, tmp_home, monkeypatch):
     win._keyline.setText("sk-test")
     win._in_en.setPlainText("Quantum travel")
     win._btn_tr.click()
-    for _ in range(80):
-        _pump(qapp, 1)
-        if not win._busy:
-            break
+    _wait_flag(qapp, lambda: win._busy)
     assert "失败" in win._status.text(), win._status.text()
     assert "空内容" in win._status.text(), win._status.text()
     assert win._result_en.toPlainText() == ""
@@ -536,3 +512,19 @@ def test_screen_capture_probe():
         assert shot is not None and shot.size > 0 and shot.shape[2] == 3
     finally:
         cap.close()
+
+def _wait_flag(qapp, getter, seconds=10.0, step=0.01):
+    """等待后台任务结束（win._busy / win._gc_busy 变 False）。
+
+    原实现固定 80 轮 ×10ms ≈ 0.8s，机器忙时（前面测试刚加载过 OCR 模型）
+    会偶发超时导致假失败，这里改成按秒计的上限并保留事件循环驱动。
+    """
+    import time as _t
+
+    deadline = _t.time() + seconds
+    while _t.time() < deadline:
+        qapp.processEvents()
+        if not getter():
+            return True
+        _t.sleep(step)
+    return not getter()

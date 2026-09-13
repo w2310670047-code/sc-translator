@@ -191,7 +191,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.4.1-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.4.2-win64.zip` into the release attachments.
 
 ## Configuration & data
 

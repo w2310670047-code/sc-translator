@@ -239,3 +239,73 @@ def hotkey_label(spec: str) -> str:
             return "+".join(parts)
     parts.append(chr(vk).upper() if 32 < vk < 127 else f"0x{vk:02X}")
     return "+".join(parts)
+
+
+# ------------------------------------------------------------------ 键盘录入辅助
+# Qt 键码 -> 我们的键名（用于"点一下直接按组合键"的录入控件；按**键码**匹配，
+# 因为很多命名键（Print/Insert/Home…）在 keyPressEvent 里 ev.text() 是空串）
+# 注意：右侧数值取自 Qt 实际枚举值（tests 里有一条断言防止写错）
+_QT_NAMED_BY_CODE: dict[int, str] = {
+    0x01000000: "ESC",           # Qt.Key_Escape
+    0x01000001: "TAB",           # Qt.Key_Tab
+    0x01000004: "ENTER",         # Qt.Key_Return
+    0x01000005: "ENTER",         # Qt.Key_Enter
+    0x01000006: "INSERT",        # Qt.Key_Insert
+    0x01000008: "PAUSE",         # Qt.Key_Pause
+    0x01000009: "PRINTSCREEN",   # Qt.Key_Print
+    0x0100000A: "PRINTSCREEN",   # Qt.Key_SysReq
+    0x01000010: "HOME",          # Qt.Key_Home
+    0x01000011: "END",           # Qt.Key_End
+    0x01000016: "PAGEUP",        # Qt.Key_PageUp
+    0x01000017: "PAGEDOWN",      # Qt.Key_PageDown
+    0x20: "SPACE",               # Qt.Key_Space
+}
+_QT_NAMED_BY_TEXT: dict[str, str] = {
+    "Print": "PRINTSCREEN", "ScrollLock": "SCROLLLOCK", "Pause": "PAUSE",
+    "Insert": "INSERT", "Home": "HOME", "End": "END",
+    "PageUp": "PAGEUP", "PageDown": "PAGEDOWN", "Space": "SPACE",
+    "Tab": "TAB", "Return": "ENTER", "Enter": "ENTER", "Escape": "ESC",
+    " ": "SPACE",
+}
+
+# Qt 修饰键掩码 -> 我们的修饰键名
+# 注意：Qt.ShiftModifier = 0x02000000、Qt.ControlModifier = 0x04000000（别写反！）
+_MODIFIER_NAMES = {
+    0x04000000: "Ctrl",   # Qt.ControlModifier
+    0x02000000: "Shift",  # Qt.ShiftModifier
+    0x08000000: "Alt",    # Qt.AltModifier
+    0x10000000: "Win",    # Qt.MetaModifier
+}
+
+
+def spec_from_qt(key: int, modifiers: int, key_text: str = "") -> Optional[str]:
+    """把 Qt 的 (键码, 修饰键) 转成热键字符串；无法作为热键时返回 None。
+
+    - F1-F24 / Print / Insert / Home / PageUp 等命名键：可单独使用；
+    - 字母与数字：必须搭配 Ctrl/Shift/Alt/Win（否则会抢走整个键盘的该键）。
+    """
+    parts: list[str] = []
+    for mask, name in _MODIFIER_NAMES.items():
+        if modifiers & mask:
+            parts.append(name)
+
+    name: Optional[str] = None
+    if 0x01000030 <= key <= 0x01000047:          # Qt.Key_F1 .. Qt.Key_F24
+        name = f"F{key - 0x01000030 + 1}"
+    if name is None:
+        name = _QT_NAMED_BY_CODE.get(key) or _QT_NAMED_BY_TEXT.get((key_text or "").strip())
+    if name is None:
+        text = (key_text or "").strip()
+        if len(text) == 1 and text.isascii() and text.isalnum():
+            if not parts:
+                return None                       # 纯字母/数字不单独作为热键
+            name = text.upper()
+    if name is None and (0x41 <= key <= 0x5A or 0x30 <= key <= 0x39):
+        if not parts:
+            return None
+        name = chr(key)
+    if name is None:
+        return None
+    parts.append(name)
+    spec = "+".join(parts)
+    return spec if parse_hotkey(spec) is not None else None

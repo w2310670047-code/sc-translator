@@ -40,6 +40,24 @@ def _isolate_runtime_home(tmp_path, monkeypatch):
     glossary.clear()
     gamecode.clear()
     yield
+    # 销毁本测试创建的顶层窗口：残留窗口的 QTimer（如防抖自动复制）会在后续测试里
+    # 触发并改到剪贴板，造成莫名其妙的假失败
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        for w in list(app.topLevelWidgets()):
+            try:
+                w._shutting_down = True          # noqa: SLF001 (测试清理)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                w.close()
+                if w.parent() is None:
+                    w.deleteLater()
+            except Exception:  # noqa: BLE001
+                pass
+        app.processEvents()
     exchange_log.reset()
     gamedict.clear()
     glossary.clear()
