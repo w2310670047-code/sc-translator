@@ -351,6 +351,7 @@ class MainWindow(QMainWindow):
         self._gc_busy = False
         self._dual_syncing = False
         self._snap_busy = False
+        self._picker = None
         self._popup = None
         self._refresh_gamecode_state()
         self._refresh_gc_mode()
@@ -371,9 +372,16 @@ class MainWindow(QMainWindow):
         hot = hotkey_label(s.snap_hotkey)
         hot2 = hotkey_label(s.snap_hotkey_select)
         state = t("snap.state", key=hot, key2=hot2, area=area, label=lab)
+        warn = False
         if not s.snap_enabled:
             state += "  " + t("snap.disabled")
+            warn = True
+        elif getattr(self.app, "hotkeys", None) is None:
+            # 注册失败：最常见原因是"已有另一个实例在运行"或热键被别的软件占用
+            state += "  " + t("snap.status_fail")
+            warn = True
         self._snap_state.setText(state)
+        self._snap_state.setStyleSheet("color:#f5b83d;" if warn else "")
         self._snap_enable.setChecked(bool(s.snap_enabled))
         self._snap_key.setText(s.snap_hotkey)
         self._snap_key2.setText(s.snap_hotkey_select)
@@ -419,6 +427,7 @@ class MainWindow(QMainWindow):
             return
         if self._snap_busy:
             return
+        log.info("热键触发截图翻译：区域=%s", (region.get("physical")))
         self._snap_busy = True
         self._btn_snap_now.setEnabled(False)
         self._set_status(t("snap.working"))
@@ -463,26 +472,56 @@ class MainWindow(QMainWindow):
             self._popup.show_message(note or t("snap.no_text"), auto_hide_sec=5)
 
     def on_snap_select_hotkey(self) -> None:
-        """热键：重新框选截图区域。"""
+        """热键/按钮：重新框选截图区域。
+
+        关键点（曾经出过 bug）：无论用户是"选中"还是"取消/直接关掉"，
+        主窗口都必须回到屏幕上——否则用户会以为程序消失了。
+        """
         if self._busy or self._snap_busy:
             self._set_status(t("snap.busy"))
             return
+        if getattr(self, "_picker", None) is not None:
+            # 再按一次 = 取消框选
+            try:
+                self._picker.close()
+            except RuntimeError:
+                pass
+            self._restore_after_pick()
+            return
+
         from .region_select import pick_region
 
+        log.info("框选截图区域：隐藏主窗口并弹出全屏选择器")
         self._set_status(t("snap.selecting"))
         self.hide()
+        try:
+            win = pick_region(cb=self._on_snap_region_picked)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("框选窗口创建失败: %s", exc)
+            self._restore_after_pick()
+            QMessageBox.warning(self, t("dlg.notice"), t("snap.region_fail"))
+            return
+        self._picker = win
+        win.cancelled.connect(self._restore_after_pick)
+        win.destroyed.connect(self._restore_after_pick)
+        log.info("框选选择器已显示：%s", win.geometry().getRect())
 
-        def on_picked(logical) -> None:
-            self._apply_snap_region(logical)
-            self.show()
-            self.raise_()
-            self.activateWindow()
+    def _on_snap_region_picked(self, logical) -> None:
+        self._apply_snap_region(logical)
+        self._restore_after_pick()
 
-        win = pick_region(cb=on_picked)
-        win.destroyed.connect(lambda *_: self.show() if not self.isVisible() else None)
+    def _restore_after_pick(self, *_args) -> None:
+        """框选收尾：把主窗口还回来（幂等，多次调用无副作用）。"""
+        self._picker = None
+        if self.isVisible():
+            return
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        log.info("框选结束，主窗口已恢复")
 
     def _apply_snap_region(self, logical) -> None:
-        """把框选的逻辑矩形换算并保存（含多屏/DPI 物理区域）。"""
+        """把框选的**全局逻辑**矩形换算并保存（含多屏/DPI 物理区域）。"""
         try:
             from ..screen import (
                 ScreenInfo,
@@ -505,6 +544,7 @@ class MainWindow(QMainWindow):
             layouts = build_layouts(screens)
             phys = logical_rect_to_physical(layouts, rect)
             if phys is None:
+                log.warning("框选区域不在任何显示器内：%s", rect)
                 self._set_status(t("snap.region_fail"))
                 return
             label = ""
@@ -520,9 +560,13 @@ class MainWindow(QMainWindow):
                 "label": label,
             }
             self.app.settings.save()
+            log.info(
+                "截图区域已保存：logical=%s physical=%s label=%s",
+                self.app.settings.snap_region["logical"], phys, label,
+            )
             self._set_status(t("snap.region_saved", w=rect[2], h=rect[3], label=label))
         except Exception as exc:  # noqa: BLE001
-            log.warning("保存截图区域失败: %s", exc)
+            log.exception("保存截图区域失败: %s", exc)
             self._set_status(t("snap.region_fail"))
         self._refresh_snap_state()
 

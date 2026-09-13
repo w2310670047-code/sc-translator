@@ -348,9 +348,9 @@ _T: dict[str, tuple[str, str, str]] = {
     "snap.status_on": ("热键已启用", "熱鍵已啟用", "Hotkeys enabled"),
     "snap.status_off": ("热键已停用", "熱鍵已停用", "Hotkeys disabled"),
     "snap.status_fail": (
-        "热键注册失败（可能被其它程序占用）",
-        "熱鍵註冊失敗（可能被其它程式佔用）",
-        "Failed to register hotkeys (maybe taken by another app)",
+        "热键注册失败：可能已有另一个本程序在运行，或被其它软件占用",
+        "熱鍵註冊失敗：可能已有另一個本程式在執行，或被其它軟體佔用",
+        "Hotkey registration failed: another instance of this app may be running, or another app took the keys",
     ),
     "snap.status_rebind": ("热键已更新", "熱鍵已更新", "Hotkeys updated"),
     "snap.bad_key": (

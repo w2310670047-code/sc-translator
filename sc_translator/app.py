@@ -229,9 +229,15 @@ class AppController:
         if spec2:
             ok_any |= svc.add(0x5102, spec2[0], spec2[1], self.mainwin.on_snap_select_hotkey)
         self.hotkeys = svc
-        log.info("全局热键注册：截图 %s / 重框 %s → %s",
-                 self.settings.snap_hotkey, self.settings.snap_hotkey_select,
-                 "成功" if ok_any else "失败（可能被占用）")
+        if ok_any:
+            log.info("全局热键注册：截图 %s / 重框 %s → 成功",
+                     self.settings.snap_hotkey, self.settings.snap_hotkey_select)
+        else:
+            log.warning(
+                "全局热键注册失败：截图 %s / 重框 %s —— 常见原因是本程序已有另一个实例在运行"
+                "（先退出它），或热键被其它软件占用（改用别的键）",
+                self.settings.snap_hotkey, self.settings.snap_hotkey_select,
+            )
         return ok_any
 
     def remove_hotkeys(self) -> None:
