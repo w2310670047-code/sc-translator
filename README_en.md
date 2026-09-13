@@ -2,7 +2,7 @@
 
 [简体中文](README.md) | [繁體中文](README_zh-TW.md) | **English**
 
-A **two-way text translator for Star Citizen players** (Windows desktop app, plain text in / plain text out):
+A **translation toolkit for Star Citizen players** (Windows desktop app): two-way text translation plus on-demand screenshot translation.
 
 - **Understand**: paste foreign text you see in game or in chat (English / Japanese / Korean) → one click to Simplified Chinese
 - **Reply**: type your Chinese → translated to English / Japanese / Korean and **auto-copied to the clipboard**, ready to `Ctrl+V` in game
@@ -13,7 +13,9 @@ Translation runs against any **OpenAI-compatible API** (DeepSeek by default). Pr
 
 > The UI ships in **Simplified Chinese / Traditional Chinese / English** — switch it from the dropdown in the top-right corner, effective immediately.
 > Project shape inspired by [ow-translate-lite](https://github.com/reverieach/ow-translate-lite);
-> earlier versions did "region capture + OCR + overlay" real-time screen translation — screen translation has since been **removed** in favor of this far cheaper (CPU and tokens) text-only workflow.
+> The earlier "real-time screen translation" (polling capture + OCR + overlay) was replaced in **v0.4.0 by
+> on-demand screenshot translation**: exactly one frame is captured when you press the hotkey, so the idle
+> cost is zero in CPU and nothing is sent to the API unless you ask for it (see the section below).
 
 ---
 
@@ -42,6 +44,8 @@ SCTranslator\
 4. **Reply**: type your Chinese on the right, pick a target language → click **翻译并复制** → the translation is copied to the clipboard, ready to `Ctrl+V` in game
 5. Optional: **output checkboxes** (「中文码」/「译文」 in the reply pane) to choose Chinese-to-Chinese, Chinese-to-foreign, or both at once (two lines)
 6. Optional: toggle **spicy mode** to switch which prompt set is used for subsequent translations
+7. Optional: use the **Language** dropdown in the top-right corner to switch Simplified Chinese / Traditional Chinese / English (instant, stored in `data\settings.json`)
+8. Optional: **screenshot translation** — press **F10** once to select the text area in game, then press **Shift+F9** any time to "capture once → OCR → translate"; the result shows in a popup next to the cursor (pinnable/copyable) and is also written to the main window
 
 ## Features
 
@@ -251,6 +255,7 @@ tests/                unit + integration + packaging regression
 
 ## Disclaimer
 
-A third-party community project, not affiliated with Cloud Imperium Games. It only translates text: it does not modify
-game files and does not inject into any process. Please comply with the terms of service of the game and of your
+A third-party community project, not affiliated with Cloud Imperium Games. It only translates: either text you paste
+in, or screen text captured on demand (hotkey) and recognized locally. It does not modify game files and does not
+inject into any process. Please comply with the terms of service of the game and of your
 translation API provider; use at your own risk. Released under the MIT license.
