@@ -48,6 +48,9 @@ class AppController:
         # 兼容字段（屏幕悬浮窗已移除）
         self.overlay = None
         self.mainwin = None
+        # 按需截图翻译服务（热键触发；重型依赖在里面懒加载）
+        self._snap = None
+        self.hotkeys = None
 
         # 术语表（专名预替换）
         self.apply_glossary()
@@ -68,6 +71,8 @@ class AppController:
 
         self.mainwin = MainWindow(self)
         self.mainwin.setStyleSheet(build_stylesheet(self.settings.theme))
+        # 窗口是热键消息的宿主，重建后必须重新注册
+        self.install_hotkeys()
 
     def set_ui_language(self, code: str) -> None:
         """切换界面语言：落盘 + 立即重建窗口（保留尺寸位置）。"""
@@ -194,6 +199,49 @@ class AppController:
         except Exception as exc:  # noqa: BLE001
             log.warning("游戏聊天码表加载失败（忽略）: %s", exc)
 
+    # ------------------------------------------------------- 按需截图翻译
+    @property
+    def snapshot(self):
+        """一次性截图翻译服务（首次访问才导入 OCR 栈）。"""
+        if self._snap is None:
+            from .snapshot import SnapshotService
+
+            self._snap = SnapshotService(self)
+        return self._snap
+
+    def install_hotkeys(self) -> bool:
+        """注册全局热键（F9 截图翻译 / F10 重框）。窗口重建后需重新调用。"""
+        if not self.settings.snap_enabled:
+            return False
+        if self.mainwin is None:
+            return False
+        from .hotkeys import HotkeyService
+        from .snapshot import parse_hotkey
+
+        self.remove_hotkeys()
+        svc = HotkeyService(int(self.mainwin.winId()))
+        svc.install()
+        ok_any = False
+        spec = parse_hotkey(self.settings.snap_hotkey)
+        if spec:
+            ok_any |= svc.add(0x5101, spec[0], spec[1], self.mainwin.on_snap_hotkey)
+        spec2 = parse_hotkey(self.settings.snap_hotkey_select)
+        if spec2:
+            ok_any |= svc.add(0x5102, spec2[0], spec2[1], self.mainwin.on_snap_select_hotkey)
+        self.hotkeys = svc
+        log.info("全局热键注册：截图 %s / 重框 %s → %s",
+                 self.settings.snap_hotkey, self.settings.snap_hotkey_select,
+                 "成功" if ok_any else "失败（可能被占用）")
+        return ok_any
+
+    def remove_hotkeys(self) -> None:
+        if self.hotkeys is not None:
+            try:
+                self.hotkeys.remove()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("注销热键异常: %s", exc)
+            self.hotkeys = None
+
     # ------------------------------------------------------- 主题
     def apply_theme(self, theme: str) -> None:
         self.qapp.setStyleSheet(build_stylesheet(theme))
@@ -204,4 +252,10 @@ class AppController:
             self.cache.flush()
         except Exception as exc:  # noqa: BLE001
             log.warning("退出清理异常: %s", exc)
+        self.remove_hotkeys()
+        if self._snap is not None:
+            try:
+                self._snap.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("截图服务清理异常: %s", exc)
         log.info("应用退出")

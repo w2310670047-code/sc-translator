@@ -299,6 +299,50 @@ class MainWindow(QMainWindow):
         gc.addLayout(gcbox)
         root.addWidget(gc_card)
 
+        # ---------------- 按需截图翻译（热键触发）----------------
+        snap_card, snap = make_card(t("snap.title"))
+        srow = QHBoxLayout()
+        self._snap_enable = QCheckBox(t("snap.enable"))
+        self._snap_enable.setChecked(bool(s.snap_enabled))
+        self._snap_enable.toggled.connect(self._on_snap_enabled)
+        srow.addWidget(self._snap_enable)
+        srow.addWidget(QLabel(t("snap.key_label")))
+        self._snap_key = QLineEdit(s.snap_hotkey)
+        self._snap_key.setFixedWidth(90)
+        self._snap_key.editingFinished.connect(self._on_snap_keys_changed)
+        srow.addWidget(self._snap_key)
+        srow.addWidget(QLabel(t("snap.key_select_label")))
+        self._snap_key2 = QLineEdit(s.snap_hotkey_select)
+        self._snap_key2.setFixedWidth(90)
+        self._snap_key2.editingFinished.connect(self._on_snap_keys_changed)
+        srow.addWidget(self._snap_key2)
+        self._btn_snap_now = QPushButton(t("snap.btn_now"))
+        self._btn_snap_now.clicked.connect(self.on_snap_hotkey)
+        srow.addWidget(self._btn_snap_now)
+        self._btn_snap_region = QPushButton(t("snap.btn_region"))
+        self._btn_snap_region.clicked.connect(self.on_snap_select_hotkey)
+        srow.addWidget(self._btn_snap_region)
+        srow.addStretch(1)
+        snap.addLayout(srow)
+
+        self._snap_state = QLabel("…")
+        self._snap_state.setObjectName("hint")
+        snap.addWidget(self._snap_state)
+
+        sbody = QHBoxLayout()
+        sbody.addWidget(QLabel(t("snap.col_src")))
+        self._snap_src = QPlainTextEdit()
+        self._snap_src.setReadOnly(True)
+        self._snap_src.setMinimumHeight(80)
+        sbody.addWidget(self._snap_src, 1)
+        sbody.addWidget(QLabel(t("snap.col_dst")))
+        self._snap_dst = QPlainTextEdit()
+        self._snap_dst.setReadOnly(True)
+        self._snap_dst.setMinimumHeight(80)
+        sbody.addWidget(self._snap_dst, 1)
+        snap.addLayout(sbody)
+        root.addWidget(snap_card)
+
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._translate_to_zh)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self._translate_to_zh)
         self._busy = False
@@ -306,8 +350,181 @@ class MainWindow(QMainWindow):
         self._gc_syncing = False
         self._gc_busy = False
         self._dual_syncing = False
+        self._snap_busy = False
+        self._popup = None
         self._refresh_gamecode_state()
         self._refresh_gc_mode()
+        self._refresh_snap_state()
+
+    # ---------------- 按需截图翻译 ----------------
+    def _refresh_snap_state(self) -> None:
+        from ..snapshot import hotkey_label
+
+        s = self.app.settings
+        region = s.snap_region or {}
+        lab = region.get("label") or ""
+        logi = region.get("logical") or {}
+        if logi:
+            area = f"{logi.get('w', 0)}×{logi.get('h', 0)} @({logi.get('x', 0)},{logi.get('y', 0)})"
+        else:
+            area = t("snap.state_no_region")
+        hot = hotkey_label(s.snap_hotkey)
+        hot2 = hotkey_label(s.snap_hotkey_select)
+        state = t("snap.state", key=hot, key2=hot2, area=area, label=lab)
+        if not s.snap_enabled:
+            state += "  " + t("snap.disabled")
+        self._snap_state.setText(state)
+        self._snap_enable.setChecked(bool(s.snap_enabled))
+        self._snap_key.setText(s.snap_hotkey)
+        self._snap_key2.setText(s.snap_hotkey_select)
+
+    def _on_snap_enabled(self, on: bool) -> None:
+        self.app.settings.snap_enabled = bool(on)
+        self.app.settings.save()
+        if on:
+            if self.app.install_hotkeys():
+                self._set_status(t("snap.status_on"))
+            else:
+                self._set_status(t("snap.status_fail"))
+        else:
+            self.app.remove_hotkeys()
+            self._set_status(t("snap.status_off"))
+        self._refresh_snap_state()
+
+    def _on_snap_keys_changed(self) -> None:
+        from ..snapshot import parse_hotkey
+
+        s = self.app.settings
+        ok = True
+        for line, attr in ((self._snap_key, "snap_hotkey"), (self._snap_key2, "snap_hotkey_select")):
+            spec = line.text().strip() or getattr(s, attr)
+            if parse_hotkey(spec) is None:
+                QMessageBox.warning(self, t("dlg.notice"), t("snap.bad_key", spec=spec))
+                ok = False
+                continue
+            setattr(s, attr, spec)
+        s.save()
+        self._refresh_snap_state()
+        if ok and s.snap_enabled:
+            self.app.install_hotkeys()
+            self._set_status(t("snap.status_rebind"))
+
+    def on_snap_hotkey(self) -> None:
+        """热键：抓取记住的区域 -> OCR -> 翻译 -> 浮窗 + 主窗口。"""
+        s = self.app.settings
+        region = s.snap_region or {}
+        if not (region.get("physical")):
+            self._set_status(t("snap.need_region"))
+            self.on_snap_select_hotkey()
+            return
+        if self._snap_busy:
+            return
+        self._snap_busy = True
+        self._btn_snap_now.setEnabled(False)
+        self._set_status(t("snap.working"))
+
+        def done(res) -> None:
+            self._snap_busy = False
+            self._btn_snap_now.setEnabled(True)
+            self._show_snap_result(res)
+
+        self.app.snapshot.run(
+            region, done, max_lines=int(s.snap_max_lines or 40), use_cache=True
+        )
+
+    def _show_snap_result(self, res) -> None:
+        s = self.app.settings
+        pairs = res.pairs()
+        note_bits = []
+        if res.error:
+            note_bits.append(res.error)
+        if res.elapsed_ms:
+            note_bits.append(t("snap.note_timing", ocr=res.ocr_ms, total=res.elapsed_ms))
+        note = "  ".join(note_bits)
+
+        if pairs and s.snap_write_main:
+            self._snap_src.setPlainText("\n".join(a for a, _ in pairs))
+            self._snap_dst.setPlainText("\n".join(b for _, b in pairs))
+        if not pairs:
+            self._set_status(note or t("snap.no_text"))
+        else:
+            self._set_status(t("snap.done", n=len(pairs)))
+
+        if not s.snap_show_popup:
+            return
+        from .snap_popup import SnapPopup
+
+        if self._popup is None:
+            self._popup = SnapPopup()
+            self._popup.copyRequested.connect(lambda txt: self._copy_text(txt, t("snap.copied")))
+        if pairs:
+            self._popup.show_result(pairs, note=note, auto_hide_sec=int(s.snap_popup_sec or 0))
+        else:
+            self._popup.show_message(note or t("snap.no_text"), auto_hide_sec=5)
+
+    def on_snap_select_hotkey(self) -> None:
+        """热键：重新框选截图区域。"""
+        if self._busy or self._snap_busy:
+            self._set_status(t("snap.busy"))
+            return
+        from .region_select import pick_region
+
+        self._set_status(t("snap.selecting"))
+        self.hide()
+
+        def on_picked(logical) -> None:
+            self._apply_snap_region(logical)
+            self.show()
+            self.raise_()
+            self.activateWindow()
+
+        win = pick_region(cb=on_picked)
+        win.destroyed.connect(lambda *_: self.show() if not self.isVisible() else None)
+
+    def _apply_snap_region(self, logical) -> None:
+        """把框选的逻辑矩形换算并保存（含多屏/DPI 物理区域）。"""
+        try:
+            from ..screen import (
+                ScreenInfo,
+                build_layouts,
+                logical_rect_to_physical,
+            )
+            from PySide6.QtGui import QGuiApplication
+
+            rect = (logical.x(), logical.y(), logical.width(), logical.height())
+            screens = []
+            for idx, sc in enumerate(QGuiApplication.screens()):
+                g = sc.geometry()
+                screens.append(
+                    ScreenInfo(
+                        index=idx,
+                        logical=(g.x(), g.y(), g.width(), g.height()),
+                        dpr=float(sc.devicePixelRatio()),
+                    )
+                )
+            layouts = build_layouts(screens)
+            phys = logical_rect_to_physical(layouts, rect)
+            if phys is None:
+                self._set_status(t("snap.region_fail"))
+                return
+            label = ""
+            for lay in layouts:
+                ox, oy = lay.phys_origin
+                pw, ph = lay.phys_size
+                if ox <= phys["left"] < ox + pw and oy <= phys["top"] < oy + ph:
+                    label = f"屏幕{lay.info.index + 1}"
+                    break
+            self.app.settings.snap_region = {
+                "logical": {"x": rect[0], "y": rect[1], "w": rect[2], "h": rect[3]},
+                "physical": phys,
+                "label": label,
+            }
+            self.app.settings.save()
+            self._set_status(t("snap.region_saved", w=rect[2], h=rect[3], label=label))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("保存截图区域失败: %s", exc)
+            self._set_status(t("snap.region_fail"))
+        self._refresh_snap_state()
 
     # ---------------- 游戏聊天码 ----------------
     def _on_gc_autocopy(self, on: bool) -> None:

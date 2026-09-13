@@ -22,14 +22,14 @@
 
 ```text
 SCTranslator\
-  SCTranslator.exe        主程序（4 MB，双击即用）
-  _internal\              运行库（含 Qt），勿删
+  SCTranslator.exe        主程序（7 MB，双击即用）
+  _internal\              运行库（含 Qt + RapidOCR 模型，约 330 MB），勿删
   prompts\                提示词（可编辑，随包释放）
   data\                   首次运行自动生成：设置 / 加密 Key / 缓存 / 日志
 ```
 
 - **便携**：整个文件夹拷到别的机器就能用（设置与日志都在 `data\`）
-- **自检**：命令行运行 `SCTranslator.exe --doctor` 检查配置/提示词/术语表；
+- **自检**：命令行运行 `SCTranslator.exe --doctor` 检查配置/提示词/术语表/游戏码表/**OCR 模型**；
   `SCTranslator.exe --doctor --online` 额外实测一次真实 API 翻译。结果同时写入 `data\logs\doctor.log`
 - 首次启动若缺少 `prompts\` 或 `data\sc_glossary.ini`，程序会从内置资源自动释放（不覆盖你改过的文件）
 
@@ -42,6 +42,31 @@ SCTranslator\
 5. 可选：**输出勾选**（回话区「中文码」/「译文」两个复选框）——按需选择中译中、中译英，或两者同时（双行）
 6. 可选：勾选/取消 **嘴臭模式**，即刻切换后续译文使用的提示词
 7. 可选：顶栏右下角 **界面语言** 下拉框切换 简体中文 / 繁體中文 / English（立即生效，记入 `data\settings.json`）
+8. 可选：**截图翻译**——按 **F10** 框选一次游戏里的文字区域，之后按 **F9** 即可"抓一次 → 识别 → 翻译"，
+   结果在鼠标旁浮窗显示（也可固定/复制），同时写入主窗口结果区
+
+## 截图翻译（热键按需，不做实时巡逻）
+
+星际公民里遇到看不懂的英文界面、任务简报、聊天，按一下热键就行——**只在按键那一刻抓一帧**，
+没有巡逻线程、没有定时采样，不按键完全不占 CPU、不烧 token。
+
+| 热键（可改） | 作用 |
+| --- | --- |
+| **F9** | 抓取记住的区域 → 本地 RapidOCR 识别 → 翻译成中文 → 鼠标旁浮窗 + 主窗口结果区 |
+| **F10** | 重新框选截图区域（首次使用也走这条） |
+
+- **识别**：本地 RapidOCR（PaddleOCR onnx 模型随包分发，离线可用，不联网、不花钱）
+- **翻译**：走你配置的 API，与文字翻译共用术语表/缓存（`Stanton System` → 斯坦顿星系、`Pyro` → 派罗星系）
+- **耗时**：首次按键需加载模型（约 1-3 秒，之后常驻内存），此后每次约 **2-6 秒**（OCR 1-3 s + 翻译 1-2 s）
+- **浮窗**：出现在鼠标旁、避开屏幕边缘，8 秒后自动淡出（可设置/可固定）；鼠标移入暂停倒计时；
+  「复制全部」把"原文 → 译文"写进剪贴板，正文也可选中局部复制
+- **防误伤**：单次最多翻译 40 行（可设置），避免误框整屏烧 token；纯数字/符号/单字符行自动丢弃
+- **失败退化**：翻译失败（欠费/断网）仍会把识别到的原文显示出来，不会白抓一帧
+- **前提**：星际公民请用**窗口化/无边框**运行；独占全屏的 DX 画面可能抓不到（程序会在状态栏说明）
+
+> 体积说明：OCR 需要 `onnxruntime + opencv + rapidocr` 与模型文件，整包因此从 120 MB 涨到约 **330 MB**
+> （zip 约 150 MB）。它们是**懒加载**的：不按热键不加载、不常驻。想回到精简包，见 `SCTranslator.spec`
+> 顶部注释（把 OCR 相关项重新排除即可，代价是截图翻译不可用）。
 
 ## 功能一览
 
@@ -154,12 +179,12 @@ python -m venv .venv
 # 产物：dist\SCTranslator\SCTranslator.exe（onedir，约 120 MB，含 Qt）
 ```
 
-打包只包含文字翻译所需的 PySide6(Core/Gui/Widgets) + requests；
-OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…）全部排除，因此体积与启动时间都很小（冷启动约 1 秒）。
-`tests/test_packaging.py` 会守住这条底线：一旦导入图里出现重型依赖，测试直接失败。
+打包包含：PySide6(Core/Gui/Widgets) + requests（文字翻译）+ rapidocr/onnxruntime/opencv（按需截图翻译）。
+OCR 栈是**懒加载**的，不进启动路径，因此冷启动仍是约 1 秒、常驻内存也不含模型；
+	ests/test_packaging.py 会守住这条底线：启动导入图里一旦出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.3.0-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.4.0-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 
@@ -193,7 +218,7 @@ OCR / 本地模型 / 图像处理（numpy、opencv、onnxruntime、llama-cpp…�
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 144 passed
 ```
 
 ```text
@@ -206,10 +231,13 @@ sc_translator/
   glossary.py         术语表（专名预替换）
   gamecode.py         游戏聊天码（码表解析 / 编码 / 解码）
   i18n.py             界面三语文案表（简中/繁中/English）
+  snapshot.py         按需截图翻译（热键 -> 抓屏 -> OCR -> 翻译）
+  ocr.py screen.py    本地 OCR 与多屏/DPI 抓屏（截图翻译用）
+  ui/snap_popup.py    截图翻译结果浮窗
   textutil.py         轻量文本工具（汉字占比）
   paths.py settings.py secrets.py logger_setup.py exchange_log.py
   translate/          缓存 + OpenAI 兼容客户端（批量/重试/思考模式关闭）
-  ui/                 主窗口 / 主题
+  ui/                 主窗口 / 结果浮窗 / 框选 / 主题
 assets/               应用图标 + 术语表源文件（打包用）
 prompts/              随包提示词默认内容
 tests/                单元 + 集成 + 打包回归

@@ -292,6 +292,78 @@ _T: dict[str, tuple[str, str, str]] = {
         "Translation in progress — switch the language afterwards",
     ),
 
+    # ---- 按需截图翻译 ----
+    "snap.title": (
+        "截图翻译（按热键抓一次，不做实时巡逻）",
+        "截圖翻譯（按熱鍵抓一次，不做即時巡邏）",
+        "Screenshot translation (one capture per hotkey press, no continuous scanning)",
+    ),
+    "snap.enable": ("启用热键", "啟用熱鍵", "Enable hotkeys"),
+    "snap.key_label": ("截图翻译", "截圖翻譯", "Capture & translate"),
+    "snap.key_select_label": ("重新框选", "重新框選", "Re-select region"),
+    "snap.btn_now": ("立即截图翻译", "立即截圖翻譯", "Capture & translate now"),
+    "snap.btn_region": ("框选区域", "框選區域", "Select region"),
+    "snap.col_src": ("原文", "原文", "Recognized"),
+    "snap.col_dst": ("译文", "譯文", "Translation"),
+    "snap.state": (
+        "热键 {key} 截图翻译 · {key2} 重新框选 · 区域 {area} {label}",
+        "熱鍵 {key} 截圖翻譯 · {key2} 重新框選 · 區域 {area} {label}",
+        "Hotkey {key} = capture & translate · {key2} = re-select · region {area} {label}",
+    ),
+    "snap.state_no_region": ("未设置", "未設定", "not set"),
+    "snap.disabled": ("（热键已停用）", "（熱鍵已停用）", "(hotkeys disabled)"),
+    "snap.working": (
+        "正在识别并翻译…（首次使用需加载 OCR 模型，约 2-5 秒）",
+        "正在辨識並翻譯…（首次使用需載入 OCR 模型，約 2-5 秒）",
+        "Recognizing and translating… (first run loads the OCR model, 2-5 s)",
+    ),
+    "snap.done": ("截图翻译完成：{n} 行", "截圖翻譯完成：{n} 行", "Screenshot translation done: {n} lines"),
+    "snap.no_text": (
+        "没有识别到文字（区域可能不含文本）",
+        "沒有辨識到文字（區域可能不含文字）",
+        "No text recognized (the region may contain none)",
+    ),
+    "snap.note_timing": (
+        "OCR {ocr}ms · 合计 {total}ms",
+        "OCR {ocr}ms · 合計 {total}ms",
+        "OCR {ocr}ms · total {total}ms",
+    ),
+    "snap.need_region": (
+        "还没有设置截图区域，先框选一次",
+        "還沒有設定截圖區域，請先框選一次",
+        "No capture region yet — select one first",
+    ),
+    "snap.selecting": (
+        "请在屏幕上拖拽框选要翻译的区域（Esc 取消）",
+        "請在螢幕上拖曳框選要翻譯的區域（Esc 取消）",
+        "Drag to select the region to translate (Esc to cancel)",
+    ),
+    "snap.region_saved": (
+        "截图区域已保存：{w}×{h} @{label}",
+        "截圖區域已儲存：{w}×{h} @{label}",
+        "Capture region saved: {w}×{h} @{label}",
+    ),
+    "snap.region_fail": ("框选区域无效，请重试", "框選區域無效，請重試", "Invalid region — try again"),
+    "snap.busy": ("正在处理中，请稍候", "正在處理中，請稍候", "Busy — please wait"),
+    "snap.status_on": ("热键已启用", "熱鍵已啟用", "Hotkeys enabled"),
+    "snap.status_off": ("热键已停用", "熱鍵已停用", "Hotkeys disabled"),
+    "snap.status_fail": (
+        "热键注册失败（可能被其它程序占用）",
+        "熱鍵註冊失敗（可能被其它程式佔用）",
+        "Failed to register hotkeys (maybe taken by another app)",
+    ),
+    "snap.status_rebind": ("热键已更新", "熱鍵已更新", "Hotkeys updated"),
+    "snap.bad_key": (
+        "{spec} 不是有效的热键（示例：F9 / Ctrl+Shift+S）",
+        "{spec} 不是有效的熱鍵（範例：F9 / Ctrl+Shift+S）",
+        "{spec} is not a valid hotkey (e.g. F9 / Ctrl+Shift+S)",
+    ),
+    "snap.copied": ("截图翻译结果已复制", "截圖翻譯結果已複製", "Screenshot translation copied"),
+    "snap.popup_title": ("截图翻译", "截圖翻譯", "Screenshot translation"),
+    "snap.popup_pin": ("固定", "固定", "Pin"),
+    "snap.popup_unpin": ("取消固定", "取消固定", "Unpin"),
+    "snap.popup_copy": ("复制全部", "複製全部", "Copy all"),
+
     # ---- 对话框 ----
     "dlg.notice": ("提示", "提示", "Notice"),
     "dlg.fail.title": ("翻译失败", "翻譯失敗", "Translation failed"),
@@ -383,9 +455,12 @@ def current() -> str:
     return _current
 
 
-def t(key: str, **kwargs) -> str:
-    """取文案并按需格式化占位符；任何缺失都优雅回退，不抛异常。"""
-    row = _T.get(key)
+def t(name: str, **kwargs) -> str:
+    """取文案并按需格式化占位符；任何缺失都优雅回退，不抛异常。
+
+    形参名为 ``name``（而不是 ``key``），这样占位符里也可以放心用 ``t("x", key=...)``。
+    """
+    row = _T.get(name)
     text = ""
     if row is not None:
         try:
@@ -396,7 +471,7 @@ def t(key: str, **kwargs) -> str:
         if not text:
             text = row[0]
     if not text:
-        return key
+        return name
     if kwargs:
         try:
             return text.format(**kwargs)

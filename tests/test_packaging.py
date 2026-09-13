@@ -14,11 +14,17 @@ HEAVY = ("numpy", "cv2", "onnxruntime", "rapidocr_onnxruntime", "mss", "llama_cp
 
 
 def test_runtime_import_graph_is_light():
-    """纯文字翻译的导入图里不允许出现 OCR/推理重型依赖（否则 exe 会胀到几百 MB）。"""
+    """主程序启动路径不允许导入重型依赖。
+
+    OCR 栈（numpy/cv2/onnxruntime）现在**随包分发**（截图翻译需要），
+    但必须保持懒加载：只有按热键时才导入，这样启动依然快、常驻内存也小。
+    """
     code = (
         "import sys, sc_translator.app;"
         "heavy=[m for m in %r if m in sys.modules];"
-        "print('HEAVY=' + ','.join(heavy))" % (HEAVY,)
+        "print('HEAVY=' + ','.join(heavy));"
+        "print('LAZY=' + str('sc_translator.ocr' in sys.modules or 'sc_translator.snapshot' in sys.modules))"
+        % (HEAVY,)
     )
     out = subprocess.run(
         [sys.executable, "-c", code],
@@ -28,8 +34,26 @@ def test_runtime_import_graph_is_light():
     )
     assert out.returncode == 0, out.stderr
     assert "HEAVY=" in out.stdout, out.stdout
-    heavy = out.stdout.split("HEAVY=", 1)[1].strip()
-    assert heavy == "", f"运行时不应导入重型依赖，实际导入了：{heavy}"
+    heavy = out.stdout.split("HEAVY=", 1)[1].splitlines()[0].strip()
+    assert heavy == "", f"启动路径不应导入重型依赖，实际导入了：{heavy}"
+    assert "LAZY=False" in out.stdout, "OCR/截图模块不应在启动时被导入"
+
+
+def test_ocr_stack_imports_on_demand():
+    """真正用到时的导入链路是通的（模型能否加载由 --doctor 负责验证）。"""
+    code = (
+        "from sc_translator import snapshot, screen;"
+        "import numpy, cv2, rapidocr_onnxruntime;"
+        "print('OK', bool(snapshot.parse_hotkey('F9')), screen.ScreenCapture is not None)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parent.parent),
+    )
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.startswith("OK True"), out.stdout
 
 
 def test_frozen_paths_point_into_exe_folder(monkeypatch, tmp_path):

@@ -175,6 +175,38 @@ def _doctor(online: bool) -> int:
 
     step("游戏聊天码", _gamecode)
 
+    def _snapshot():
+        """验证截图翻译链路：热键解析 + 区域配置 + 真正加载 OCR 模型（验证模型随包）。"""
+        import time
+
+        from . import snapshot
+        from .settings import Settings
+
+        s = Settings().load()
+        spec = snapshot.parse_hotkey(s.snap_hotkey)
+        spec2 = snapshot.parse_hotkey(s.snap_hotkey_select)
+        if spec is None or spec2 is None:
+            raise RuntimeError(f"热键配置无法解析：{s.snap_hotkey!r} / {s.snap_hotkey_select!r}")
+        region = s.snap_region or {}
+        phys = region.get("physical")
+        area = (
+            f"{phys['width']}×{phys['height']}@({phys['left']},{phys['top']})"
+            if phys
+            else "未设置（首次按热键会引导框选）"
+        )
+        t0 = time.time()
+        svc = snapshot.SnapshotService(None)
+        svc.ocr._ensure()                     # 触发加载 onnx 模型（随包与否立刻见分晓）
+        svc.close()
+        ms = int((time.time() - t0) * 1000)
+        return (
+            f"热键 {snapshot.hotkey_label(s.snap_hotkey)} 截图翻译 / "
+            f"{snapshot.hotkey_label(s.snap_hotkey_select)} 重框；区域 {area}；"
+            f"RapidOCR 模型加载 {ms}ms{'（已启用）' if s.snap_enabled else '（热键已停用）'}"
+        )
+
+    step("截图翻译（OCR）", _snapshot)
+
     if online:
 
         def _api():

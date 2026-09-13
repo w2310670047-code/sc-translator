@@ -23,8 +23,8 @@
 
 ```text
 SCTranslator\
-  SCTranslator.exe        主程式（4 MB，雙擊即用）
-  _internal\              執行庫（含 Qt），請勿刪除
+  SCTranslator.exe        主程式（7 MB，雙擊即用）
+  _internal\              執行庫（含 Qt + RapidOCR 模型，約 330 MB），請勿刪除
   prompts\                提示詞（可編輯，隨包釋出）
   data\                   首次執行自動產生：設定 / 加密 Key / 快取 / 記錄
 ```
@@ -46,6 +46,7 @@ SCTranslator\
 ## 功能一覽
 
 - 雙向翻譯：外文 → 中文；中文 → English / Japanese / Korean（自動複製）
+- **按需截圖翻譯**：全域熱鍵 **F9** 抓一次記住的區域 → 本機 RapidOCR → 翻譯，滑鼠旁浮窗顯示；**F10** 重新框選。不按鍵完全不耗資源（無巡邏、無定時取樣）
 - **介面三語切換**：頂欄下拉框隨時切換 **簡體中文 / 繁體中文 / English**，立即生效並記憶
 - **輸出勾選**：中譯中（`[zh] @中文碼`）／中譯英／兩者同時（雙行 `[en] 譯文`），回話區與遊戲碼卡片各一組
 - **遊戲聊天碼**：中文 ↔ 遊戲內 `@碼`（`你好嗎` → `[zh] @IH@E8@AP`），讓遊戲聊天裡也能發中文
@@ -106,6 +107,28 @@ SCTranslator\
 - 翻譯進行中會拒絕切換（避免回呼寫到已銷毀的控件），狀態列會提示
 - 服務商下拉的**顯示名**隨語言改變，**存進設定的值**始終是穩定 key，舊版存過顯示名的設定會自動移轉
 
+## 截圖翻譯（熱鍵按需，不做即時巡邏）
+
+遊戲裡遇到看不懂的英文介面、任務簡報、聊天，按一下熱鍵就好——**只在按鍵那一刻抓一幀**，
+沒有巡邏執行緒、沒有定時取樣，不按鍵完全不佔 CPU、不浪費 token。
+
+| 熱鍵（可改） | 作用 |
+| --- | --- |
+| **F9** | 抓取記住的區域 → 本機 RapidOCR 辨識 → 翻譯成中文 → 滑鼠旁浮窗 + 主視窗結果區 |
+| **F10** | 重新框選截圖區域（首次使用也走這條） |
+
+- **辨識**：本機 RapidOCR（PaddleOCR onnx 模型隨包，離線可用、不連網、不花錢）
+- **翻譯**：走你設定的 API，與文字翻譯共用詞彙表/快取（`Stanton System` → 斯坦頓星系、`Pyro` → 派羅星系）
+- **耗時**：首次按鍵需載入模型（約 1-3 秒，之後常駐記憶體），之後每次約 **2-6 秒**
+- **浮窗**：出現在滑鼠旁、自動避開螢幕邊緣，8 秒後淡出（可設定/可固定）；滑鼠移入暫停倒數；
+  「複製全部」把「原文 → 譯文」寫進剪貼簿
+- **防誤傷**：單次最多翻譯 40 行（可設定）；純數字/符號/單字元行自動丟棄
+- **失敗退化**：翻譯失敗（欠費/斷網）仍會顯示辨識到的原文
+- **前提**：星際公民請用**視窗化/無邊框**執行；獨占全螢幕的 DX 畫面可能抓不到
+
+> 體積說明：OCR 需要 `onnxruntime + opencv + rapidocr` 與模型檔，整包因此從 120 MB 漲到約 **330 MB**
+> （zip 約 150 MB）。它們是**懶載入**的：不按熱鍵不載入、不常駐。想回到精簡包見 `SCTranslator.spec` 頂部註解。
+
 ## 提示詞檔案（可自行編輯）
 
 提示詞不寫死在程式裡，放在**程式資料夾下的 `prompts\`**（`.md` / `.txt` 純文字）：
@@ -158,7 +181,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 會守住這條底線：一旦匯入圖出現重量級相依，測試直接失敗。
 
 發佈到 GitHub：雙擊 `publish.bat`（設定 origin → 推送 `main` → 複製發行說明到剪貼簿並開啟 Release 頁面），
-再把 `dist\SCTranslator-v0.3.0-win64.zip` 拖進 Release 附件區即可。
+再把 `dist\SCTranslator-v0.4.0-win64.zip` 拖進 Release 附件區即可。
 
 ## 設定與資料
 
@@ -192,7 +215,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 144 passed
 ```
 
 ```text

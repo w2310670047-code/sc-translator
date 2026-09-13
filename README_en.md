@@ -23,8 +23,8 @@ Get `SCTranslator-v*-win64.zip` from [Releases](https://github.com/w2310670047-c
 
 ```text
 SCTranslator\
-  SCTranslator.exe        main program (4 MB)
-  _internal\              runtime (includes Qt) — do not delete
+  SCTranslator.exe        main program (7 MB)
+  _internal\              runtime (includes Qt + RapidOCR models, ~330 MB) — do not delete
   prompts\                prompts (editable, extracted on first run)
   data\                   created on first run: settings / encrypted key / cache / logs
 ```
@@ -46,6 +46,7 @@ SCTranslator\
 ## Features
 
 - Two-way translation: foreign → Chinese; Chinese → English / Japanese / Korean (auto-copied)
+- **On-demand screenshot translation**: press **F9** to capture a remembered region → local RapidOCR → translate, shown in a floating popup next to the cursor; **F10** re-selects the region. Idle cost is zero (no polling loop, no timed sampling)
 - **Trilingual UI**: switch between **Simplified Chinese / Traditional Chinese / English** from the top-bar dropdown — applied instantly and remembered
 - **Output checkboxes**: zh→zh (`[zh] @code`), zh→foreign, or both (two lines: `[zh] @…` + `[en] …`) — one set in the reply pane, one in the game-chat-code card
 - **Game chat code**: Chinese ↔ in-game `@code` (`你好吗` → `[zh] @IH@E8@AP`), so you can actually send Chinese in game chat
@@ -111,6 +112,33 @@ choice is stored as `ui_language` in `data\settings.json`.
 - Provider **display names** follow the language, while the **stored value** stays a stable key
   (`DeepSeek`/`OpenAI`/`custom`); settings that stored a legacy display name are migrated automatically
 
+## Screenshot translation (on-demand hotkey, no continuous scanning)
+
+When you hit English UI text, a mission briefing or chat you cannot read, just press a hotkey — the app
+captures **exactly one frame** at that moment. There is no polling thread and no timed sampling, so the
+idle cost is zero in CPU and in tokens.
+
+| Hotkey (configurable) | Action |
+| --- | --- |
+| **F9** | Capture the remembered region → local RapidOCR → translate to Chinese → floating popup + main-window result pane |
+| **F10** | Re-select the capture region (also used on first run) |
+
+- **Recognition**: local RapidOCR (PaddleOCR onnx models ship with the app; fully offline, no cost)
+- **Translation**: your configured API, sharing the glossary and cache with text translation
+  (`Stanton System` → 斯坦顿星系, `Pyro` → 派罗星系)
+- **Timing**: the first press loads the model (~1-3 s, then it stays in memory); afterwards each press takes
+  roughly **2-6 s** (OCR 1-3 s + translation 1-2 s)
+- **Popup**: appears next to the cursor, auto-avoids screen edges, fades after 8 s (configurable/pinnable);
+  hovering pauses the countdown; "Copy all" puts "source → translation" on the clipboard
+- **Guard rail**: at most 40 lines per capture (configurable) so a mis-dragged full-screen region cannot burn tokens;
+  numeric-only, punctuation-only and single-character lines are dropped
+- **Graceful failure**: if translation fails (no credit/offline) the recognized source text is still shown
+- **Requirement**: run Star Citizen **windowed / borderless**; exclusive fullscreen DX frames may not be capturable
+
+> Size note: OCR needs `onnxruntime + opencv + rapidocr` plus model files, which grows the bundle from
+> 120 MB to about **330 MB** (zip ~150 MB). They are **lazy-loaded**: nothing is loaded or kept resident until
+> you press the hotkey. See the comments at the top of `SCTranslator.spec` to build a slim variant instead.
+
 ## Prompt files (editable)
 
 Prompts are not hard-coded; they live under `prompts\` next to the program (`.md` / `.txt` plain text):
@@ -163,7 +191,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.3.0-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.4.0-win64.zip` into the release attachments.
 
 ## Configuration & data
 
@@ -195,7 +223,7 @@ then drop `dist\SCTranslator-v0.3.0-win64.zip` into the release attachments.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 113 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 144 passed
 ```
 
 ```text

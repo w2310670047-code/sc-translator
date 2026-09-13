@@ -6,36 +6,48 @@
 产物：
     dist\\SCTranslator\\SCTranslator.exe   （onedir，便携，双击即用）
 
-设计要点：
-- 只打包文字翻译真正需要的东西：PySide6(Core/Gui/Widgets) + requests；
-  屏幕 OCR / 本地模型 / 词典相关的重型依赖全部排除，体积与启动时间最小。
-- prompts/ 与 data/sc_glossary.ini 作为数据文件随包：
-  首次运行由 sc_translator.bootstrap 释放到 exe 同级目录，用户可编辑。
+包含内容：
+- PySide6(Core/Gui/Widgets) + requests：文字翻译主功能；
+- rapidocr-onnxruntime + onnxruntime + opencv：**按需**截图翻译（热键触发的本地 OCR）。
+  这几个包约 60-70 MB，整包因此从 ~120 MB 涨到 ~330 MB；运行期是**懒加载**的
+  （不按热键不初始化、不占内存），所以启动速度不受影响。
+  想要精简包：把 EXCLUDES 里注释掉的 OCR 相关项恢复、并删掉 collect_data_files
+  那一行即可（代价是截图翻译不可用）。
+- 仍然排除：llama-cpp（本地大模型）、matplotlib/scipy/pandas 等无关重型库。
+
+数据文件：
+- prompts/                 提示词（用户可编辑，首启释放到 exe 同级）
+- assets/sc_glossary.ini   官方术语表
+- rapidocr 的 onnx 模型与 config.yaml（随包，离线可用）
 """
 
 import os
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = os.path.abspath(os.getcwd())
 
-# 重型依赖：文字翻译用不到（屏幕 OCR / 本地推理 / 图像处理）
+# 与翻译功能无关的重型依赖
+# 若要出"纯文字精简版"：把下面注释的两行恢复为生效项，
+# 并删除 DATAS 里的 collect_data_files("rapidocr_onnxruntime")。
 EXCLUDES = [
-    "onnxruntime",
-    "rapidocr_onnxruntime",
-    "cv2",
-    "mss",
+    # "onnxruntime",
+    # "rapidocr_onnxruntime",
+    # "cv2",
+    # "numpy",
+    # "mss",
+    # "PIL",
+    # "shapely",
+    # "pyclipper",
+    # "wordninja",
     "llama_cpp",
-    "numpy",
-    "PIL",
-    "Pillow",
-    "shapely",
-    "pyclipper",
-    "wordninja",
     "matplotlib",
     "scipy",
     "pandas",
     "IPython",
     "pytest",
     "tests",
+    "tkinter",
     # PySide6 里没用到的大模块（减少 ~200MB）
     "PySide6.QtWebEngineCore",
     "PySide6.QtWebEngineWidgets",
@@ -78,7 +90,26 @@ DATAS = [
     (os.path.join(ROOT, "assets", "sc_glossary.ini"), "assets"),
 ]
 
-HIDDEN = ["sc_translator"]
+# RapidOCR 的 onnx 模型/config 不是标准包数据，必须显式收集（否则运行期报缺模型）
+try:
+    DATAS += collect_data_files("rapidocr_onnxruntime")
+except Exception:  # noqa: BLE001
+    pass
+
+HIDDEN = [
+    "sc_translator",
+    "sc_translator.snapshot",
+    "sc_translator.ocr",
+    "sc_translator.screen",
+    "sc_translator.wordseg",
+    "onnxruntime",
+    "onnxruntime.capi._pybind_state",
+    "rapidocr_onnxruntime",
+    "pyclipper",
+    "shapely",
+    "yaml",
+    "wordninja",
+]
 
 a = Analysis(
     [os.path.join(ROOT, "main.py")],

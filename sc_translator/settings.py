@@ -85,6 +85,15 @@ class Settings:
     gamecode_auto_copy: bool = True    # 结果自动进剪贴板（便于游戏内 Ctrl+V）
     gamecode_out_code: bool = True     # 游戏码卡片：输出中文码行
     gamecode_out_en: bool = False      # 游戏码卡片：输出英文译文行
+    # ---- 按需截图翻译（全局热键触发，不做实时巡逻）----
+    snap_enabled: bool = True          # 启用全局热键
+    snap_hotkey: str = "F9"            # 截图识别 + 翻译
+    snap_hotkey_select: str = "F10"    # 重新框选截图区域
+    snap_region: Optional[dict] = None # {logical:{x,y,w,h}, physical:{left,top,width,height}, dpr, label}
+    snap_popup_sec: int = 8            # 结果浮窗自动淡出秒数（0 = 一直显示）
+    snap_show_popup: bool = True       # 显示结果浮窗
+    snap_write_main: bool = True       # 结果同时写进主窗口
+    snap_max_lines: int = 40           # 单次最多翻译行数（误框整屏时防止烧 token）
     # ---- 界面 ----
     theme: str = "dark"
     ui_language: str = "zh_CN"         # 界面语言: zh_CN / zh_TW / en
