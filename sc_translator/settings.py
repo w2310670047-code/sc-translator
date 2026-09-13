@@ -87,7 +87,7 @@ class Settings:
     gamecode_out_en: bool = False      # 游戏码卡片：输出英文译文行
     # ---- 按需截图翻译（全局热键触发，不做实时巡逻）----
     snap_enabled: bool = True          # 启用全局热键
-    snap_hotkey: str = "F9"            # 截图识别 + 翻译
+    snap_hotkey: str = "Shift+F9"      # 截图识别 + 翻译（默认 Shift+F9，避免和别的软件抢 F9）
     snap_hotkey_select: str = "F10"    # 重新框选截图区域
     snap_region: Optional[dict] = None # {logical:{x,y,w,h}, physical:{left,top,width,height}, dpr, label}
     snap_popup_sec: int = 8            # 结果浮窗自动淡出秒数（0 = 一直显示）

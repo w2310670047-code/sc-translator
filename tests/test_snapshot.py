@@ -71,13 +71,23 @@ def test_filter_lines_caps_length():
 
 # ------------------------------------------------------------------ 流水线（替身）
 class _FakeCapture:
+    """替身：实现新的 grab_ex 协议（返回 图像/后端/错误）。"""
+
+    BACKENDS = ("dxcam", "mss", "qt")
+
     def __init__(self, frame=b"frame"):
         self.frame = frame
         self.calls = []
 
-    def grab(self, phys):
+    def grab_ex(self, phys):
         self.calls.append(phys)
-        return self.frame
+        if self.frame is None:
+            return None, "", "dxcam: 失败；mss: BitBlt 失败"
+        return self.frame, self.BACKENDS[0], ""
+
+    def grab(self, phys):
+        img, _b, _e = self.grab_ex(phys)
+        return img
 
     def close(self):
         pass

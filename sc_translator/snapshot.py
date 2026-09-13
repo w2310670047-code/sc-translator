@@ -134,11 +134,18 @@ class SnapshotService:
             res.error = "还没有框选截图区域（先按 F10 框选一次）"
             return res
 
-        # 1) 抓屏
-        bgr = self.capture.grab(phys)
+        # 1) 抓屏（多后端自动回退：DXGI 桌面复制 → GDI BitBlt → Qt）
+        bgr, backend, cap_err = self.capture.grab_ex(phys)
         if bgr is None:
-            res.error = "抓屏失败：游戏若为独占全屏请改为窗口化/无边框"
+            res.error = (
+                f"抓屏失败（区域 {phys.get('width')}×{phys.get('height')} @"
+                f"({phys.get('left')},{phys.get('top')})）：{cap_err}\n"
+                "常见原因：游戏开了 HDR、画面带 GPU 保护（DRM），或该后端抓不到此画面。\n"
+                "可尝试：关闭 HDR；把游戏切到窗口化/无边框；若仍失败请把 data\\logs 里的这行发我。"
+            )
             return res
+        if backend != self.capture.BACKENDS[0]:
+            log.info("抓屏使用回退后端：%s", backend)
 
         # 2) 本地 OCR
         t_ocr = time.time()
@@ -174,8 +181,9 @@ class SnapshotService:
         res.translate_ms = int((time.time() - t_tr) * 1000)
         res.elapsed_ms = int((time.time() - t0) * 1000)
         log.info(
-            "截图翻译：%d 行，OCR %dms，翻译 %dms，合计 %dms%s",
+            "截图翻译：%d 行，抓屏后端 %s，OCR %dms，翻译 %dms，合计 %dms%s",
             len(res.lines),
+            backend,
             res.ocr_ms,
             res.translate_ms,
             res.elapsed_ms,

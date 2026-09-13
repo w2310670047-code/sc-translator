@@ -41,14 +41,19 @@ class QtHotkeyFilter(QAbstractNativeEventFilter):
     def __init__(self) -> None:
         super().__init__()
         self.handlers: dict[int, Callable[[], None]] = {}
+        self._seen_msgs = 0
 
     def nativeEventFilter(self, eventType, message):  # noqa: N802 (Qt 命名)
         try:
+            self._seen_msgs += 1
+            if self._seen_msgs == 1:
+                log.debug("原生事件过滤器已启用（eventType=%r）", eventType)
             if eventType != b"windows_generic_MSG" and eventType != "windows_generic_MSG":
                 return False, 0
             msg = wintypes.MSG.from_address(int(message))
             if msg.message == WM_HOTKEY:
                 handler = self.handlers.get(int(msg.wParam))
+                log.info("收到 WM_HOTKEY id=%s（已注册: %s）", msg.wParam, sorted(self.handlers))
                 if handler is not None:
                     try:
                         handler()

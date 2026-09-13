@@ -109,6 +109,8 @@ HIDDEN = [
     "shapely",
     "yaml",
     "wordninja",
+    "dxcam",
+    "comtypes",
 ]
 
 a = Analysis(

@@ -207,6 +207,34 @@ def _doctor(online: bool) -> int:
 
     step("截图翻译（OCR）", _snapshot)
 
+    def _capture():
+        """逐个试抓屏后端：抓游戏画面失败时，这一项能直接指出是哪个后端可用。"""
+        from .screen import ScreenCapture, dxcam_available
+
+        cap = ScreenCapture()
+        rect = {"left": 0, "top": 0, "width": 200, "height": 120}
+        results = []
+        for name in ("dxcam", "mss", "qt"):
+            fn = getattr(cap, f"_grab_{name}", None)
+            if fn is None:
+                results.append(f"{name}: 不可用")
+                continue
+            try:
+                img = fn(cap._clamp(rect))
+                ok = img is not None and not cap._looks_blank(img)
+                results.append(f"{name}: {'可用' if ok else '返回空/全黑'}")
+            except Exception as exc:  # noqa: BLE001
+                if "没有可用显示器" in str(exc):
+                    results.append(f"{name}: 跳过（自检无 GUI）")
+                else:
+                    results.append(f"{name}: {type(exc).__name__} {str(exc)[:60]}")
+        img, backend, err = cap.grab_ex(rect)
+        cap.close()
+        head = f"当前使用 {backend}" if img is not None else f"全部失败（{err[:120]}）"
+        return f"{head}；dxcam 已安装={dxcam_available()}；" + "，".join(results)
+
+    step("抓屏后端", _capture)
+
     if online:
 
         def _api():

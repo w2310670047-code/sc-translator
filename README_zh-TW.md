@@ -30,7 +30,7 @@ SCTranslator\
 ```
 
 - **可攜**：整個資料夾複製到別台電腦就能用（設定與記錄都在 `data\`）
-- **自我檢查**：命令列執行 `SCTranslator.exe --doctor` 檢查設定／提示詞／詞彙表；
+- **自我檢查**：命令列執行 `SCTranslator.exe --doctor` 檢查設定／提示詞／詞彙表／遊戲碼表／OCR 模型／**抓屏後端**；
   `SCTranslator.exe --doctor --online` 額外實測一次真實 API 翻譯。結果同時寫入 `data\logs\doctor.log`
 - 首次啟動若缺少 `prompts\` 或 `data\sc_glossary.ini`，程式會從內建資源自動釋出（不會覆蓋你改過的檔案）
 
@@ -46,7 +46,7 @@ SCTranslator\
 ## 功能一覽
 
 - 雙向翻譯：外文 → 中文；中文 → English / Japanese / Korean（自動複製）
-- **按需截圖翻譯**：全域熱鍵 **F9** 抓一次記住的區域 → 本機 RapidOCR → 翻譯，滑鼠旁浮窗顯示；**F10** 重新框選。不按鍵完全不耗資源（無巡邏、無定時取樣）
+- **按需截圖翻譯**：全域熱鍵 **Shift+F9** 抓一次記住的區域 → 本機 RapidOCR → 翻譯，滑鼠旁浮窗顯示；**F10** 重新框選。不按鍵完全不耗資源（無巡邏、無定時取樣）
 - **介面三語切換**：頂欄下拉框隨時切換 **簡體中文 / 繁體中文 / English**，立即生效並記憶
 - **輸出勾選**：中譯中（`[zh] @中文碼`）／中譯英／兩者同時（雙行 `[en] 譯文`），回話區與遊戲碼卡片各一組
 - **遊戲聊天碼**：中文 ↔ 遊戲內 `@碼`（`你好嗎` → `[zh] @IH@E8@AP`），讓遊戲聊天裡也能發中文
@@ -114,7 +114,7 @@ SCTranslator\
 
 | 熱鍵（可改） | 作用 |
 | --- | --- |
-| **F9** | 抓取記住的區域 → 本機 RapidOCR 辨識 → 翻譯成中文 → 滑鼠旁浮窗 + 主視窗結果區 |
+| **Shift+F9** | 抓取記住的區域 → 本機 RapidOCR 辨識 → 翻譯成中文 → 滑鼠旁浮窗 + 主視窗結果區 |
 | **F10** | 重新框選截圖區域（首次使用也走這條） |
 
 - **辨識**：本機 RapidOCR（PaddleOCR onnx 模型隨包，離線可用、不連網、不花錢）
@@ -181,7 +181,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 會守住這條底線：一旦匯入圖出現重量級相依，測試直接失敗。
 
 發佈到 GitHub：雙擊 `publish.bat`（設定 origin → 推送 `main` → 複製發行說明到剪貼簿並開啟 Release 頁面），
-再把 `dist\SCTranslator-v0.4.2-win64.zip` 拖進 Release 附件區即可。
+再把 `dist\SCTranslator-v0.4.3-win64.zip` 拖進 Release 附件區即可。
 
 ## 設定與資料
 

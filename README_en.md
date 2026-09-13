@@ -30,7 +30,7 @@ SCTranslator\
 ```
 
 - **Portable**: copy the whole folder to another machine and it keeps your settings and logs (all under `data\`)
-- **Self-check**: run `SCTranslator.exe --doctor` to verify settings / prompts / glossary;
+- **Self-check**: run `SCTranslator.exe --doctor` to verify settings / prompts / glossary / game code table / OCR models / **capture backends**;
   `SCTranslator.exe --doctor --online` additionally performs one real API translation. The report is also written to `data\logs\doctor.log`
 - On first launch the app extracts `prompts\` and `data\sc_glossary.ini` from bundled resources if missing (it never overwrites files you edited)
 
@@ -46,7 +46,7 @@ SCTranslator\
 ## Features
 
 - Two-way translation: foreign → Chinese; Chinese → English / Japanese / Korean (auto-copied)
-- **On-demand screenshot translation**: press **F9** to capture a remembered region → local RapidOCR → translate, shown in a floating popup next to the cursor; **F10** re-selects the region. Idle cost is zero (no polling loop, no timed sampling)
+- **On-demand screenshot translation**: press **Shift+F9** to capture a remembered region → local RapidOCR → translate, shown in a floating popup next to the cursor; **F10** re-selects the region. Idle cost is zero (no polling loop, no timed sampling)
 - **Trilingual UI**: switch between **Simplified Chinese / Traditional Chinese / English** from the top-bar dropdown — applied instantly and remembered
 - **Output checkboxes**: zh→zh (`[zh] @code`), zh→foreign, or both (two lines: `[zh] @…` + `[en] …`) — one set in the reply pane, one in the game-chat-code card
 - **Game chat code**: Chinese ↔ in-game `@code` (`你好吗` → `[zh] @IH@E8@AP`), so you can actually send Chinese in game chat
@@ -120,7 +120,7 @@ idle cost is zero in CPU and in tokens.
 
 | Hotkey (configurable) | Action |
 | --- | --- |
-| **F9** | Capture the remembered region → local RapidOCR → translate to Chinese → floating popup + main-window result pane |
+| **Shift+F9** | Capture the remembered region → local RapidOCR → translate to Chinese → floating popup + main-window result pane |
 | **F10** | Re-select the capture region (also used on first run) |
 
 - **Recognition**: local RapidOCR (PaddleOCR onnx models ship with the app; fully offline, no cost)
@@ -191,7 +191,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.4.2-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.4.3-win64.zip` into the release attachments.
 
 ## Configuration & data
 
