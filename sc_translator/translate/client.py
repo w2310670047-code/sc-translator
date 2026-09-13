@@ -66,6 +66,7 @@ class ClientOptions:
 class OpenAiCompatClient:
     def __init__(self, opts: Optional[ClientOptions] = None, cache: Optional[TranslationCache] = None) -> None:
         self.opts = opts or ClientOptions()
+        self._no_thinking = False      # 网关拒绝 thinking 参数后置位，之后不再发送
         self.cache = cache
         self._session = requests.Session()
         self._prefix_lock = threading.Lock()
@@ -130,20 +131,77 @@ class OpenAiCompatClient:
             raise ApiError(f"模型列表解析失败: {exc}") from exc
 
     # ---------- 翻译 ----------
+    #: 默认开启 Thinking 的模型族：翻译不需要思考（会让 content 为空/变慢/双倍计费）
+    # 官方文档：DeepSeek 模型思考模式**默认打开**（effort 默认 high），因此按厂商前缀判断更稳；
+    # 若某个网关/模型不接受该参数，会 400，我们自动去掉参数重试（见 _chat）。
+    THINKING_MODELS = ("deepseek", "thinking")
+
+    @classmethod
+    def needs_thinking_off(cls, model: str) -> bool:
+        # 用"包含"而不是"前缀"：网关常带前缀（如 openrouter/deepseek-v4-pro）
+        name = (model or "").lower()
+        if not name:
+            return False
+        return any(token in name for token in cls.THINKING_MODELS)
+
+    @staticmethod
+    def _empty_diag(data: dict, payload: dict) -> str:
+        """把"为什么空"写进日志：模型、finish_reason、思考 token、输出预算、用户文本。"""
+        try:
+            choice = (data.get("choices") or [{}])[0]
+            finish = choice.get("finish_reason")
+            usage = data.get("usage") or {}
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
+            user_last = ""
+            for m in reversed(payload.get("messages", [])):
+                if m.get("role") == "user":
+                    user_last = str(m.get("content", ""))[:120]
+                    break
+            return (
+                f"model={payload.get('model')!r} finish_reason={finish!r} "
+                f"max_tokens={payload.get('max_tokens')} reasoning_tokens={reasoning} "
+                f"thinking={payload.get('thinking')} user_text={user_last!r}"
+            )
+        except Exception:  # noqa: BLE001
+            return f"model={payload.get('model')!r}（诊断信息解析失败）"
+
+    @staticmethod
+    def _empty_hint(data: dict) -> str:
+        """给用户看的原因（区分"思考吃满预算"与其它情况）。"""
+        try:
+            choice = (data.get("choices") or [{}])[0]
+            finish = choice.get("finish_reason")
+            usage = data.get("usage") or {}
+            reasoning = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0
+            if finish == "length" or reasoning:
+                return (
+                    f"模型把输出预算花在思考上了（reasoning_tokens={reasoning}，"
+                    f"finish_reason={finish}），已自动改用“关闭思考”重试仍未成功。"
+                )
+            if finish:
+                return f"finish_reason={finish}。"
+        except Exception:  # noqa: BLE001
+            pass
+        return ""
+
     def _chat(self, messages: list[dict], temperature: float = 0.3, max_tokens: int = 512) -> str:
         prefix = self.resolve_prefix()
+        model = self.opts.model or "deepseek-chat"
         payload = {
-            "model": self.opts.model or "deepseek-chat",
+            "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
-        # deepseek-v4* 默认开启 Thinking 思考模式，会导致 content 为空/延迟/双倍计费。
-        # 实时翻译不需要思考：显式关闭（见 https://api-docs.deepseek.com/guides/thinking_mode）
-        if str(payload["model"]).lower().startswith("deepseek-v4"):
+        # deepseek-v4* / deepseek-flash 等默认开启 Thinking：
+        # 思考会吃掉 max_tokens 导致 content 为空（HTTP 200 但没内容），实时翻译必须显式关闭。
+        # 见 https://api-docs.deepseek.com/guides/thinking_mode
+        thinking_off = self.needs_thinking_off(model) and not self._no_thinking
+        if thinking_off:
             payload["thinking"] = {"type": "disabled"}
         last: Optional[Exception] = None
+        tried_force_off = thinking_off
         for attempt in range(self.opts.max_retries + 1):
             try:
                 resp = self._do_post(prefix + "/chat/completions", payload)
@@ -155,27 +213,31 @@ class OpenAiCompatClient:
                     except Exception:  # noqa: BLE001
                         pass
                     content = content.strip()
-                    if not content:
-                        # HTTP 200 但内容为空：按失败处理，给出可见原因而不是静默空白
-                        user_last = ""
-                        for m in reversed(payload.get("messages", [])):
-                            if m.get("role") == "user":
-                                user_last = str(m.get("content", ""))[:120]
-                                break
-                        log.warning(
-                            "模型返回空内容(HTTP 200)：model=%r user_text=%.120r",
-                            payload.get("model"),
-                            user_last,
-                        )
-                        raise ApiError(
-                            "模型返回了空内容（HTTP 200）。请在主窗口点“测试”或改选列表里的模型（如 deepseek-chat）再试。",
-                            200,
-                        )
-                    # 记录返回内容（诊断乱码/编码问题用，repr 可看不可见字符）
-                    log.debug(
-                        "API 返回内容 len=%d repr=%.220r", len(content), content
+                    if content:
+                        # 记录返回内容（诊断乱码/编码问题用，repr 可看不可见字符）
+                        log.debug("API 返回内容 len=%d repr=%.220r", len(content), content)
+                        return content
+
+                    diag = self._empty_diag(data, payload)
+                    if not tried_force_off and not self._no_thinking:
+                        # 兜底：本次没关思考（可能是没见过的模型名），关掉再试一次
+                        tried_force_off = True
+                        payload["thinking"] = {"type": "disabled"}
+                        log.warning("模型返回空内容，改用 thinking=disabled 重试：%s", diag)
+                        continue
+                    log.warning("模型返回空内容(HTTP 200)：%s", diag)
+                    raise ApiError(
+                        "模型返回了空内容（HTTP 200）："
+                        + self._empty_hint(data)
+                        + "可在主窗口点“测试”，或改用 deepseek-flash / deepseek-v4-pro 以外的模型再试。",
+                        200,
                     )
-                    return content
+                if resp.status_code in (400, 422) and "thinking" in payload and "thinking" in resp.text.lower():
+                    # 有些 OpenAI 兼容网关不认识 thinking 参数（实测官方 API 认识，取值 adaptive/enabled/disabled）
+                    self._no_thinking = True
+                    payload.pop("thinking", None)
+                    log.warning("该服务不接受 thinking 参数，去掉后重试：%s", resp.text[:140])
+                    continue
                 if resp.status_code in _RETRY_STATUS and attempt < self.opts.max_retries:
                     time.sleep(self.opts.retry_base_s * (2 ** attempt))
                     continue
@@ -239,7 +301,8 @@ class OpenAiCompatClient:
             {"role": "system", "content": self._chat_system(target=target, src=source_lang, keep_chat_prefix=keep_chat_prefix)},
             {"role": "user", "content": text},
         ]
-        max_tokens = max(64, min(1024, int(len(text) * 2.5)))
+        # 预算下限给足：思考模型（若没能关闭思考）会先花掉一部分，短句也要留余量
+        max_tokens = max(256, min(1024, int(len(text) * 2.5)))
         try:
             out = self._chat(messages, temperature=0.3, max_tokens=max_tokens)
         except ApiError as exc:
@@ -313,7 +376,7 @@ class OpenAiCompatClient:
              + prompt_files.fill(_NUMBERED_TMPL, target=target)},
             {"role": "user", "content": numbered},
         ]
-        max_tokens = min(4096, 96 + int(sum(min(700, len(t) * 2.5) for t in lines)))
+        max_tokens = min(4096, 256 + int(sum(min(700, len(t) * 2.5) for t in lines)))
         try:
             raw = self._chat(messages, temperature=0.3, max_tokens=max_tokens)
         except ApiError as exc:
@@ -362,7 +425,7 @@ class OpenAiCompatClient:
         model = self.opts.model or "deepseek-chat"
         style = "spicy" if spicy else "normal"
         try:
-            out = self._chat(messages, temperature=0.4, max_tokens=max(128, int(len(text) * 3)))
+            out = self._chat(messages, temperature=0.4, max_tokens=max(256, int(len(text) * 3)))
         except ApiError as exc:
             exchange_log.record("reply", model, text, error=str(exc), style=style)
             raise

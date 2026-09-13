@@ -191,7 +191,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.4.3-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.4.4-win64.zip` into the release attachments.
 
 ## Configuration & data
 
@@ -213,7 +213,12 @@ then drop `dist\SCTranslator-v0.4.3-win64.zip` into the release attachments.
 ## FAQ
 
 - **Clicking translate does nothing / missing key**: fill in the API key first; `SCTranslator.exe --doctor` pinpoints the problem
-- **"model returned empty content"**: the `deepseek-v4-*` family enables Thinking by default and returns an empty `content` for plain chat calls; the app automatically adds `"thinking":{"type":"disabled"}` for that family — just retry
+- **"model returned empty content (HTTP 200)"**: this is **thinking mode** — DeepSeek models enable thinking **by default**
+  (effort defaults to `high`), so the reasoning chain eats the output budget of a short translation request and `content`
+  comes back empty at HTTP 200. The app now automatically: ① sends `{"thinking":{"type":"disabled"}}` for `deepseek*`
+  models; ② retries once with thinking disabled if content is still empty; ③ raises the per-line output budget floor to
+  256; ④ reports `finish_reason` and `reasoning_tokens` in the error when both attempts are empty. Measured on the same
+  sentence: 85 output tokens without the flag vs **7** with `disabled`. See `docs\参考-DeepSeek思考模式.md`
 - **Nothing appears / it fails to start**: check `data\logs\startup.log` and `sc_translator.log`; from source, run `python -m sc_translator` in a terminal to see the error
 - **Translations not good enough**: edit the prompts under `prompts\`, or add terms to `data\sc_glossary.ini`, then restart
 - **Spicy mode**: purely a prompt switch; it affects subsequent translations immediately

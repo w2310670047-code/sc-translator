@@ -181,7 +181,7 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 `tests/test_packaging.py` 會守住這條底線：一旦匯入圖出現重量級相依，測試直接失敗。
 
 發佈到 GitHub：雙擊 `publish.bat`（設定 origin → 推送 `main` → 複製發行說明到剪貼簿並開啟 Release 頁面），
-再把 `dist\SCTranslator-v0.4.3-win64.zip` 拖進 Release 附件區即可。
+再把 `dist\SCTranslator-v0.4.4-win64.zip` 拖進 Release 附件區即可。
 
 ## 設定與資料
 
@@ -203,8 +203,13 @@ OCR／本機模型／影像處理（numpy、opencv、onnxruntime、llama-cpp…�
 ## 常見問題
 
 - **點「翻譯」沒反應／提示缺少 Key**：先填 API Key；`SCTranslator.exe --doctor` 可快速定位
-- **提示「模型返回了空內容」**：`deepseek-v4-*` 系列預設開啟 Thinking，一般 chat 請求會回傳空的 `content`；
-  程式已自動為該系列附加 `"thinking":{"type":"disabled"}`，重新啟動後重試即可
+- **提示「模型返回了空內容（HTTP 200）」**：這是**思考模式**造成的——DeepSeek 模型**預設開啟思考**（effort 預設 `high`），
+  短翻譯請求的輸出預算會被思維鏈吃掉，於是 HTTP 200 但 `content` 為空。程式現在會自動：
+  ① 對 `deepseek*` 模型加 `{"thinking":{"type":"disabled"}}`；
+  ② 若仍為空，自動改「關閉思考」重試一次；
+  ③ 單行輸出預算下限提高到 256；
+  ④ 兩次都空時在錯誤裡給出 `finish_reason` 與 `reasoning_tokens`。
+  實測同一句：不帶參數輸出 85 token、帶 `disabled` 只要 7。詳見 `docs\参考-DeepSeek思考模式.md`
 - **雙擊沒視窗／啟動失敗**：看 `data\logs\startup.log` 與 `sc_translator.log`；
   以原始碼執行可直接在命令列執行 `python -m sc_translator` 看錯誤
 - **譯文不理想**：改 `prompts\` 下的提示詞，或把術語補進 `data\sc_glossary.ini`，再重新啟動

@@ -92,7 +92,7 @@ class _EmptyServer(FakeServer):
 
 
 def test_empty_content_200_treated_as_error():
-    """HTTP 200 但返回空内容：必须报错（不能静默空白）。"""
+    """HTTP 200 但返回空内容：必须报错（不能静默空白），并带上真实原因。"""
     from sc_translator.translate.client import ApiError, ClientOptions, OpenAiCompatClient
 
     srv = _EmptyServer(prefix="")
@@ -106,6 +106,157 @@ def test_empty_content_200_treated_as_error():
     except ApiError as exc:
         assert exc.status == 200
         assert "空内容" in str(exc)
+
+
+class _GatewayServer(FakeServer):
+    """OpenAI 兼容网关：不认识 thinking 参数（用于验证我们不会误伤这类服务）。"""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.saw_thinking = []
+
+    def handle_post(self, url, payload=None, headers=None):
+        self.saw_thinking.append("thinking" in (payload or {}))
+        if "thinking" in (payload or {}):
+            return FakeResponse(400, {"error": {"message": "unknown parameter: thinking"}})
+        return super().handle_post(url, payload, headers)
+
+
+class _ThinkingLeakServer(FakeServer):
+    """第一次把内容留在 reasoning_content（content 空），关掉思考后才正常。
+
+    这正是 deepseek-flash 上的真实现象：思考吃满 max_tokens → content 为空、HTTP 200。
+    """
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.payloads: list[dict] = []
+
+    def handle_post(self, url, payload=None, headers=None):
+        self.payloads.append(dict(payload or {}))
+        if "thinking" not in (payload or {}):
+            return FakeResponse(200, {
+                "choices": [{
+                    "message": {"content": "", "reasoning_content": "让我想想……" * 20},
+                    "finish_reason": "length",
+                }],
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 152}},
+            })
+        return FakeResponse(200, {"choices": [{"message": {"content": "你好"}, "finish_reason": "stop"}]})
+
+
+def test_flash_model_disables_thinking_mode():
+    """deepseek-flash 同样默认思考（实测 reasoning_tokens=152），必须显式关闭。"""
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    srv = FakeServer(prefix="")
+    opts = ClientOptions(api_base="https://fake.local", api_key="k", model="deepseek-flash")
+    opts.get = srv.handle_get
+    opts.post = srv.handle_post
+    c = OpenAiCompatClient(opts, cache=None)
+    c.translate_line("hello", "en", "zh-CN")
+    assert srv.completions[-1].get("thinking") == {"type": "disabled"}, srv.completions[-1]
+
+
+def test_thinking_model_table():
+    from sc_translator.translate.client import OpenAiCompatClient as C
+
+    # 官方文档：DeepSeek 模型思考模式默认打开（含 deepseek-chat 系），故 deepseek* 一律关闭
+    for m in ("deepseek-v4-pro", "deepseek-v4-flash", "deepseek-flash", "deepseek-chat",
+              "deepseek-reasoner", "x-thinking-y", "openrouter/deepseek-v4-pro"):
+        assert C.needs_thinking_off(m) is True, m
+    for m in ("gpt-4o-mini", "qwen2.5-7b", "glm-4-flash", ""):
+        assert C.needs_thinking_off(m) is False, m
+
+
+def test_empty_content_retries_with_thinking_disabled():
+    """没关思考导致 content 为空 -> 自动关掉思考重试一次并成功（关键兜底）。"""
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    srv = _ThinkingLeakServer(prefix="")
+    opts = ClientOptions(api_base="https://fake.local", api_key="k", model="some-unknown-model")
+    opts.get = srv.handle_get
+    opts.post = srv.handle_post
+    c = OpenAiCompatClient(opts, cache=None)
+    out = c.translate_line("hello", "en", "zh-CN")
+    assert out == "你好"
+    assert len(srv.payloads) == 2, "应当先失败一次、再带 thinking=disabled 重试一次"
+    assert "thinking" not in srv.payloads[0], "首次请求不该无缘无故带 thinking（避免不认识该参数的网关报错）"
+    assert srv.payloads[1]["thinking"] == {"type": "disabled"}
+
+
+class _AlwaysEmptyServer(FakeServer):
+    """无论是否关闭思考都返回空 content（例如预算被截断/模型异常）。"""
+
+    def handle_post(self, url, payload=None, headers=None):
+        return FakeResponse(200, {
+            "choices": [{"message": {"content": "", "reasoning_content": "……"}, "finish_reason": "length"}],
+            "usage": {"completion_tokens_details": {"reasoning_tokens": 152}},
+        })
+
+
+def test_empty_content_error_explains_thinking_budget():
+    """两次都空：错误信息要说清"思考吃满预算"，而不是笼统一句空内容。"""
+    from sc_translator.translate.client import ApiError, ClientOptions, OpenAiCompatClient
+
+    srv = _AlwaysEmptyServer(prefix="")
+    opts = ClientOptions(api_base="https://fake.local", api_key="k", model="deepseek-flash")
+    opts.get = srv.handle_get
+    opts.post = srv.handle_post
+    c = OpenAiCompatClient(opts, cache=None)
+    try:
+        c.translate_line("hello", "en", "zh-CN")
+        raise AssertionError("应当抛出 ApiError")
+    except ApiError as exc:
+        msg = str(exc)
+        assert "空内容" in msg
+        assert "思考" in msg and "reasoning_tokens=152" in msg, msg
+
+
+def test_unknown_gateway_does_not_get_thinking_param():
+    """非 thinking 模型的首次请求不带 thinking，避免网关因未知参数拒绝。"""
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    srv = _GatewayServer(prefix="")
+    opts = ClientOptions(api_base="https://fake.local", api_key="k", model="gpt-4o-mini")
+    opts.get = srv.handle_get
+    opts.post = srv.handle_post
+    c = OpenAiCompatClient(opts, cache=None)
+    assert c.translate_line("hello", "en", "zh-CN")
+    assert srv.saw_thinking == [False], srv.saw_thinking
+
+
+class _RejectThinkingServer(FakeServer):
+    """严格网关：收到未知参数 thinking 直接 400（官方 API 接受，但自建网关可能不接受）。"""
+
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.payloads: list[dict] = []
+
+    def handle_post(self, url, payload=None, headers=None):
+        self.payloads.append(dict(payload or {}))
+        if "thinking" in (payload or {}):
+            return FakeResponse(400, {"error": {"message": "Failed to deserialize: thinking: unknown field"}})
+        return FakeResponse(200, {"choices": [{"message": {"content": "译好了"}}]})
+
+
+def test_thinking_param_dropped_when_gateway_rejects_it():
+    """网关因 thinking 参数报 400 时，自动去掉参数重试并记住（不再重复踩）。"""
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    srv = _RejectThinkingServer(prefix="")
+    opts = ClientOptions(api_base="https://fake.local", api_key="k", model="deepseek-flash")
+    opts.get = srv.handle_get
+    opts.post = srv.handle_post
+    c = OpenAiCompatClient(opts, cache=None)
+    assert c.translate_line("hello", "en", "zh-CN") == "译好了"
+    assert c._no_thinking is True
+    assert "thinking" in srv.payloads[0], "第一次会带 thinking"
+    assert "thinking" not in srv.payloads[1], "被拒后应去掉参数重试"
+    # 后续请求不再带该参数
+    srv.payloads.clear()
+    c.translate_line("world", "en", "zh-CN")
+    assert all("thinking" not in p for p in srv.payloads), srv.payloads
 
 
 def test_v4_model_disables_thinking_mode():
@@ -127,7 +278,16 @@ def test_v4_model_disables_thinking_mode():
     opts2.post = srv2.handle_post
     c2 = OpenAiCompatClient(opts2, cache=None)
     c2.translate_line("hi", "en", "zh-CN")
-    assert "thinking" not in srv2.completions[0]
+    # 官方文档：思考模式对 DeepSeek 模型默认打开，deepseek-chat 同样要关
+    assert srv2.completions[0]["thinking"] == {"type": "disabled"}
+
+    srv3 = FakeServer(prefix="")
+    opts3 = ClientOptions(api_base="https://fake.local", api_key="k", model="gpt-4o-mini")
+    opts3.get = srv3.handle_get
+    opts3.post = srv3.handle_post
+    c3 = OpenAiCompatClient(opts3, cache=None)
+    c3.translate_line("hi", "en", "zh-CN")
+    assert "thinking" not in srv3.completions[0], "非 DeepSeek 模型不该带该参数"
 
 
 def test_batch_translation_numbered_parsing():

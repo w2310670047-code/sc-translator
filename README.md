@@ -184,7 +184,7 @@ OCR 栈是**懒加载**的，不进启动路径，因此冷启动仍是约 1 秒
 	ests/test_packaging.py 会守住这条底线：启动导入图里一旦出现重型依赖，测试直接失败。
 
 发布到 GitHub：双击 `publish.bat`（配置 origin → 推送 `main` → 复制发行说明到剪贴板并打开 Release 页面），
-再把 `dist\SCTranslator-v0.4.3-win64.zip` 拖进 Release 附件区即可。
+再把 `dist\SCTranslator-v0.4.4-win64.zip` 拖进 Release 附件区即可。
 
 ## 配置与数据
 
@@ -206,8 +206,13 @@ OCR 栈是**懒加载**的，不进启动路径，因此冷启动仍是约 1 秒
 ## 常见问题
 
 - **点“翻译”没反应 / 提示缺少 Key**：先填 API Key；`SCTranslator.exe --doctor` 可快速定位
-- **提示“模型返回了空内容”**：`deepseek-v4-*` 系列默认开启 Thinking，普通 chat 请求会返回空 `content`；
-  程序已自动为该系列附加 `"thinking":{"type":"disabled"}`，重启后重试即可
+- **提示“模型返回了空内容（HTTP 200）”**：这是**思考模式**造成的——DeepSeek 模型**默认开启思考**（effort 默认 `high`），
+  短翻译请求的输出预算会被思维链吃掉，于是 HTTP 200 但 `content` 为空。程序现在会自动：
+  ① 对 `deepseek*` 模型加 `{"thinking":{"type":"disabled"}}`；
+  ② 若仍为空，自动改“关闭思考”重试一次；
+  ③ 单行输出预算下限提到 256；
+  ④ 两次都空时在错误里给出 `finish_reason` 与 `reasoning_tokens`（说明是“思考吃满预算”）。
+  实测同一句：不带参数输出 85 token、带 `disabled` 只要 7。详见 `docs\参考-DeepSeek思考模式.md`
 - **双击无窗口 / 启动失败**：看 `data\logs\startup.log` 与 `sc_translator.log`；
   源码运行可直接命令行执行 `python -m sc_translator` 看报错
 - **译文不理想**：改 `prompts\` 下的提示词，或把术语补进 `data\sc_glossary.ini`，再重启
