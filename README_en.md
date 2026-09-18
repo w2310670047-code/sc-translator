@@ -1,4 +1,4 @@
-﻿# Star Citizen Translator (SC Translator)
+# Star Citizen Translator (SC Translator)
 
 [简体中文](README.md) | [繁體中文](README_zh-TW.md) | **English**
 
@@ -6,7 +6,7 @@ A **translation toolkit for Star Citizen players** (Windows desktop app): two-wa
 
 - **Understand**: paste foreign text you see in game or in chat (English / Japanese / Korean) → one click to Simplified Chinese
 - **Reply**: type your Chinese → translated to English / Japanese / Korean and **auto-copied to the clipboard**, ready to `Ctrl+V` in game
-- **Glossary**: `Stanton → 斯坦顿星系`, `Pyro → 派罗星系`, plus 1200+ names mined from the official `global.ini` (locations / vehicles / items / organizations), applied as proper-noun pre-replacement before the model call
+- **Glossary**: `Stanton → 斯坦顿星系`, `Pyro → 派罗星系`, plus 8700+ term pairs mined from the official `global.ini` (locations / vehicles / items / organizations), applied as proper-noun pre-replacement before the model call
 - **Spicy mode**: a single toggle that picks the "normal" or the "spicy" (trash-talk flavored, no real profanity) prompt. No auto-detection, no auto-generation
 
 Translation runs against any **OpenAI-compatible API** (DeepSeek by default). Prompts and glossary are external editable files.
@@ -195,7 +195,7 @@ OCR / local models / imaging (numpy, opencv, onnxruntime, llama-cpp …) are all
 `tests/test_packaging.py` guards that boundary: if a heavy dependency ever enters the import graph, the test fails.
 
 Publishing to GitHub: double-click `publish.bat` (sets origin → pushes `main` → copies the release notes to the clipboard and opens the release page),
-then drop `dist\SCTranslator-v0.4.4-win64.zip` into the release attachments.
+then drop `dist\SCTranslator-v0.4.5-win64.zip` into the release attachments.
 
 ## Configuration & data
 

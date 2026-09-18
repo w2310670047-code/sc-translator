@@ -4,6 +4,6 @@
 面向《星际公民》英文界面与玩家聊天。
 """
 
-__version__ = "0.4.4"
+__version__ = "0.4.5"
 APP_NAME = "SCTranslator"
 APP_DISPLAY_NAME = "Star Citizen 翻译器"
