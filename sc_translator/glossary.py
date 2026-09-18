@@ -23,17 +23,24 @@ log = logging.getLogger(__name__)
 _terms: dict[str, str] = {}
 _pattern: Optional[re.Pattern] = None
 _loaded_path: Optional[str] = None
+_pattern_dirty = False
 
 
 def configured() -> bool:
     return bool(_terms)
 
 
-def load(path: str, max_entries: int = 4000) -> int:
-    global _terms, _pattern, _loaded_path
+def load(path: str, max_entries: int = 20000) -> int:
+    """载入术语表。max_entries 只是防爆上限（默认 20000，足够装下官方全量专名）。
+
+    注意：正则编译推迟到**首次 apply** 时才做（8000+ 词条的编译约 0.5 秒，
+    放启动路径会拖慢窗口出现；放首次翻译时几乎无感）。
+    """
+    global _terms, _pattern, _loaded_path, _pattern_dirty
     _terms = {}
     _pattern = None
     _loaded_path = None
+    _pattern_dirty = False
     if not path or not os.path.exists(path):
         return 0
     count = 0
@@ -41,6 +48,7 @@ def load(path: str, max_entries: int = 4000) -> int:
         with open(path, "r", encoding="utf-8-sig", errors="replace") as fh:
             for raw in fh:
                 if count >= max_entries:
+                    log.warning("术语表条目超过上限 %d，多余部分被忽略", max_entries)
                     break
                 line = raw.strip()
                 if not line or line.startswith(("#", ";", "//")) or "=" not in line:
@@ -55,9 +63,16 @@ def load(path: str, max_entries: int = 4000) -> int:
         log.warning("术语表加载失败 %s: %s", path, exc)
         return 0
     _loaded_path = path
-    _compile()
+    _pattern_dirty = True
     log.info("SC 术语表已加载：%d 词条 (%s)", count, path)
     return count
+
+
+def _ensure_pattern() -> None:
+    global _pattern_dirty
+    if _pattern_dirty or (_pattern is None and _terms):
+        _compile()
+        _pattern_dirty = False
 
 
 def _compile() -> None:
@@ -71,15 +86,19 @@ def _compile() -> None:
 
 
 def clear() -> None:
-    global _terms, _pattern, _loaded_path
+    global _terms, _pattern, _loaded_path, _pattern_dirty
     _terms = {}
     _pattern = None
     _loaded_path = None
+    _pattern_dirty = False
 
 
 def apply(text: str) -> str:
     """把已知词条替换为中文（词边界匹配）。未配置/无命中原样返回。"""
-    if not text or _pattern is None:
+    if not text or not _terms:
+        return text
+    _ensure_pattern()
+    if _pattern is None:
         return text
 
     def _rep(m: "re.Match[str]") -> str:
