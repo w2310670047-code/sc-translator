@@ -7,7 +7,7 @@ A **translation toolkit for Star Citizen players** (Windows desktop app): two-wa
 - **Understand**: paste foreign text you see in game or in chat (English / Japanese / Korean) → one click to Simplified Chinese
 - **Reply**: type your Chinese → translated to English / Japanese / Korean and **auto-copied to the clipboard**, ready to `Ctrl+V` in game
 - **Glossary**: `Stanton → 斯坦顿星系`, `Pyro → 派罗星系`, plus 8700+ term pairs mined from the official `global.ini` (locations / vehicles / items / organizations), applied as proper-noun pre-replacement before the model call
-- **Spicy mode**: a single toggle that picks the "normal" or the "spicy" (trash-talk flavored, no real profanity) prompt. No auto-detection, no auto-generation
+- **Spicy mode**: a single toggle that picks the "normal" or the "spicy" prompt set. No auto-detection, no auto-generation. **The spicy prompt explicitly permits real profanity, personal insults and discriminatory content** (it lives in the editable `prompts\translation_spicy.md`; edit it or leave the toggle off if you don't want that)
 
 Translation runs against any **OpenAI-compatible API** (DeepSeek by default). Prompts and glossary are external editable files.
 
@@ -45,7 +45,7 @@ SCTranslator\
 5. Optional: **output checkboxes** (「中文码」/「译文」 in the reply pane) to choose Chinese-to-Chinese, Chinese-to-foreign, or both at once (two lines)
 6. Optional: toggle **spicy mode** to switch which prompt set is used for subsequent translations
 7. Optional: use the **Language** dropdown in the top-right corner to switch Simplified Chinese / Traditional Chinese / English (instant, stored in `data\settings.json`)
-8. Optional: **screenshot translation** — press **F10** once to select the text area in game, then press **Shift+F9** any time to "capture once → OCR → translate"; the result shows in a popup next to the cursor (pinnable/copyable) and is also written to the main window
+8. Optional: **screenshot translation** — press **F10** once to select the text area in game, then press **Shift+F9** any time to "capture once → OCR → translate"; the result goes to three places: ① a quick popup next to the cursor (auto-fades, pinnable/copyable) ② a **persistent overlay** that accumulates the history ③ the main window panes
 
 ## Features
 
@@ -55,6 +55,14 @@ SCTranslator\
 - **Output checkboxes**: zh→zh (`[zh] @code`), zh→foreign, or both (two lines: `[zh] @…` + `[en] …`) — one set in the reply pane, one in the game-chat-code card
 - **Game chat code**: Chinese ↔ in-game `@code` (`你好吗` → `[zh] @IH@E8@AP`), so you can actually send Chinese in game chat
 - Glossary pre-replacement: 1200+ official EN/ZH pairs (locations / vehicles / items / organizations), fully editable
+- **You decide where results go**: the screenshot card has 「Show results in: **Persistent overlay** / **Popup by cursor**」 checkboxes —
+  keep either one, or **turn both off**; with both off the result only goes to the main window result panes and you copy it manually
+  (no floating window at all, nothing covering the game)
+- **Persistent translation overlay** (removed in 0.4.0, wired back in): screenshot results **accumulate** in an always-on-top frame —
+  one row per unique line, capped by `max_entries` (default 120, scrolls beyond that). Click-through until you press 「☰ Pin」,
+  then drag/resize/right-click menu/「Copy all」; press 「✕」 to hide it and use 「Show overlay」 in the main window to bring it back
+- **Reply bar in the overlay**: tick 「Show reply bar in overlay」 to type a Chinese reply right there (Enter to translate, last 8 exchanges kept);
+  whether the translation is auto-copied is controlled by the 「Auto-copy reply translations」 toggle (on by default)
 - Spicy mode toggle (normal ⇄ spicy prompt sets, user-editable)
 - Translation cache + multi-line batched requests + `Ctrl+Enter`, repeated text is never billed twice
 - **Full error logging**: startup crashes / uncaught exceptions / Qt warnings go to `data\logs\startup.log`;
@@ -232,7 +240,7 @@ then drop `dist\SCTranslator-v0.4.5-win64.zip` into the release attachments.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt pytest
-.\.venv\Scripts\python.exe -m pytest tests -q        # 144 passed
+.\.venv\Scripts\python.exe -m pytest tests -q        # 198 passed, 1 skipped
 ```
 
 ```text

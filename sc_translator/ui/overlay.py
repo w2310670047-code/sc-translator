@@ -1,10 +1,17 @@
-"""置顶悬浮译文框（两态：固定 / 未固定-鼠标穿透）。
+"""译文悬浮框（常驻置顶，两态：固定 / 未固定-鼠标穿透）。
+
+数据来源：**按需截图翻译**（Shift+F9 → OCR → 翻译）的结果经 ``push_lines()``
+累积到这里，按原文去重、受 ``settings.max_entries`` 限制；不依赖实时巡逻管线
+（``pipeline.py`` / ``patrol.py`` 已删除）。
 
 - 未固定（默认，游戏内友好）：整窗鼠标穿透不挡操作；
   窗边有一个永远可点的小手柄「☰ 固定」——点击即固定，拖动手柄即可移动窗口。
 - 固定后：整窗可交互——拖动标题栏移动、右下角缩放、右键菜单、回话输入、
   点标题栏「取消固定」回到穿透态。
 固定/穿透状态与主窗口“鼠标穿透”开关保持同步并持久化。
+
+ctx 需要暴露：``settings``（含 ``save()``）、``mainwin.refresh_overlay_controls()``，
+以及可选的 ``translate_reply_async(text, target, done)``（浮窗回话；缺了就提示不可用）。
 """
 
 from __future__ import annotations
@@ -29,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..i18n import t
 from .theme import palette, overlay_style
 
 log = logging.getLogger(__name__)
@@ -59,24 +67,30 @@ class GripHandle(QWidget):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_QuitOnClose, False)   # 与浮窗一起，不阻止关主窗口时退出
         self.setFixedSize(64, 24)
         self._press: Optional[QPoint] = None
         self._moved = False
         self.setCursor(Qt.OpenHandCursor)
 
-        self._label = QLabel("☰ 固定", self)
+        self._label = QLabel(t("ov.grip"), self)
         self._label.setAlignment(Qt.AlignCenter)
         self._label.setGeometry(2, 2, 60, 20)
         self._label.setStyleSheet(
             "border-radius:9px; background:rgba(24,29,38,235); color:#46a6ff; font-size:12px; font-weight:600;"
         )
-        self.setToolTip("点击：固定悬浮框（可交互/拖动）；按住拖动：移动悬浮框")
+        self.setToolTip(t("ov.grip.tip"))
 
     def _style_refresh(self) -> None:
         c = palette(self._ov.ctx.settings.theme)
         self._label.setStyleSheet(
             f"border-radius:9px; background:rgba(14,18,24,235); color:{c['accent']}; font-size:12px; font-weight:600;"
         )
+
+    def retranslate(self) -> None:
+        """切换界面语言后刷新本手柄文案。"""
+        self._label.setText(t("ov.grip"))
+        self.setToolTip(t("ov.grip.tip"))
 
     # ---- 拖动/点击 ----
     def mousePressEvent(self, ev: QMouseEvent) -> None:
@@ -141,8 +155,12 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)  # 初始即穿透，按设置覆盖
+        # 浮窗是独立顶层窗口：显式声明它不参与"最后一个窗口关闭"的判定，
+        # 这样关掉主窗口时程序照常退出（Qt 对 Tool 窗口默认不加 WA_QuitOnClose）
+        self.setAttribute(Qt.WA_QuitOnClose, False)
         self._user_hidden = False
         self._rows: dict[str, QWidget] = {}
+        self._exchanges: list[tuple[str, str, str]] = []   # (原文, 译文, 目标语言)
         self._pending_show = False
 
         # ------- 结构 -------
@@ -161,7 +179,7 @@ class OverlayWindow(QWidget):
         hlay = QHBoxLayout(self._header)
         hlay.setContentsMargins(2, 0, 0, 0)
         hlay.setSpacing(4)
-        self._title = QLabel("★ SC 译文")
+        self._title = QLabel(t("ov.title"))
         self._title.setObjectName("ovTitle")
         self._count = QLabel("")
         self._count.setObjectName("ovCount")
@@ -170,16 +188,17 @@ class OverlayWindow(QWidget):
         hlay.addStretch(1)
         self._spicy_btn = QPushButton("", self._header)
         self._spicy_btn.setObjectName("ovBtn")
-        self._spicy_btn.setToolTip("嘴臭模式：开=译文用嘴臭提示词；关=用正常提示词（随开关即时生效）")
+        self._spicy_btn.setToolTip(t("ov.spicy.tip"))
         self._spicy_btn.clicked.connect(lambda: self.set_spicy_mode(not bool(self.ctx.settings.spicy_mode)))
-        self._pin_btn = QPushButton("取消固定", self._header)
+        self._pin_btn = QPushButton(t("ov.unpin"), self._header)
         self._pin_btn.setObjectName("ovBtn")
-        self._pin_btn.setToolTip("回到鼠标穿透状态（游戏内不挡操作）")
+        self._pin_btn.setToolTip(t("ov.pin.tip"))
         self._pin_btn.clicked.connect(lambda: self.set_pinned(False))
         btn_hide = QPushButton("✕", self._header)
         btn_hide.setObjectName("ovBtn")
         btn_hide.setFixedSize(20, 18)
-        btn_hide.setToolTip("隐藏悬浮框（内容更新时自动重现）")
+        self._btn_hide = btn_hide
+        btn_hide.setToolTip(t("ov.hide.tip"))
         btn_hide.clicked.connect(self._on_hide_clicked)
         hlay.addWidget(self._spicy_btn)
         hlay.addWidget(self._pin_btn)
@@ -211,15 +230,15 @@ class OverlayWindow(QWidget):
         tl.setSpacing(6)
         self._reply_input = QLineEdit(top)
         self._reply_input.setObjectName("ovInput")
-        self._reply_input.setPlaceholderText("输入中文回话，Enter 翻译…")
+        self._reply_input.setPlaceholderText(t("ov.reply.ph"))
         self._reply_target = QComboBox(top)
         self._reply_target.setObjectName("ovInput")
         self._reply_target.addItems(["English", "Japanese", "Korean"])
         self._reply_target.setFixedWidth(86)
-        self._reply_btn = QPushButton("翻译", top)
+        self._reply_btn = QPushButton(t("ov.reply.btn"), top)
         self._reply_btn.setObjectName("ovBtn")
-        self._reply_btn.setToolTip("翻译输入的中文并加入下方问答记录")
-        self._reply_clear = QPushButton("清空记录", top)
+        self._reply_btn.setToolTip(t("ov.reply.btn.tip"))
+        self._reply_clear = QPushButton(t("ov.reply.clear"), top)
         self._reply_clear.setObjectName("ovBtn")
         tl.addWidget(self._reply_input, 1)
         tl.addWidget(self._reply_target)
@@ -308,7 +327,7 @@ class OverlayWindow(QWidget):
         # 标题栏/手柄/缩放柄只在固定态需要
         self._header.setVisible(pinned)
         self._grip.setVisible(pinned)
-        self._pin_btn.setText("取消固定" if pinned else "固定")
+        self._pin_btn.setText(t("ov.unpin") if pinned else t("ov.pin"))
         self._floating_grip._style_refresh()
         if self.isVisible():
             hwnd = int(self.winId())
@@ -332,13 +351,13 @@ class OverlayWindow(QWidget):
         self._refresh_spicy_btn()
         if notify_main and self.ctx.mainwin is not None:
             self.ctx.mainwin.refresh_overlay_controls()
-        self._show_toast("嘴臭模式已开启：译文用嘴臭提示词" if on else "嘴臭模式已关闭：恢复正常翻译", 2500)
+        self._show_toast(t("ov.toast.spicy_on") if on else t("ov.toast.spicy_off"), 2500)
 
     def _refresh_spicy_btn(self) -> None:
         on = bool(self.ctx.settings.spicy_mode)
         danger = palette(self.ctx.settings.theme)["danger"]
         muted = palette(self.ctx.settings.theme)["muted"]
-        self._spicy_btn.setText("😤 嘴臭：开" if on else "😶 嘴臭：关")
+        self._spicy_btn.setText(t("ov.spicy.on") if on else t("ov.spicy.off"))
         self._spicy_btn.setStyleSheet(
             f"background:transparent;border:none;color:{danger if on else muted};"
             f"font-size:12px;font-weight:{'700' if on else '400'};"
@@ -370,7 +389,7 @@ class OverlayWindow(QWidget):
             self._default_geometry()
 
     def _default_geometry(self) -> None:
-        region = self.ctx.settings.region or {}
+        region = self.ctx.settings.snap_region or {}
         screen = QGuiApplication.screenAt(QGuiApplication.primaryScreen().geometry().center())
         avail = screen.availableGeometry() if screen else QGuiApplication.primaryScreen().availableGeometry()
         lg = region.get("logical")
@@ -398,6 +417,22 @@ class OverlayWindow(QWidget):
         """兼容旧调用：按当前设置同步穿透/固定态。"""
         self._apply_pin_state()
 
+    def retranslate(self) -> None:
+        """切换界面语言后刷新悬浮框内文案（问答记录一并重建以刷新按钮文案）。"""
+        self._title.setText(t("ov.title"))
+        self._spicy_btn.setToolTip(t("ov.spicy.tip"))
+        self._pin_btn.setToolTip(t("ov.pin.tip"))
+        self._btn_hide.setToolTip(t("ov.hide.tip"))
+        self._reply_input.setPlaceholderText(t("ov.reply.ph"))
+        self._reply_btn.setText(t("ov.reply.btn"))
+        self._reply_btn.setToolTip(t("ov.reply.btn.tip"))
+        self._reply_clear.setText(t("ov.reply.clear"))
+        self._floating_grip.retranslate()
+        self._refresh_spicy_btn()
+        self._apply_pin_state()
+        self._rebuild_exchanges()
+        self._update_count()
+
     def clear_all(self) -> None:
         for w in list(self._rows.values()):
             w.setParent(None)
@@ -419,54 +454,53 @@ class OverlayWindow(QWidget):
         self.hide()
         self.visible_changed.emit(False)
 
-    def pipeline_started(self) -> None:
-        self.clear_all()
-        self._user_hidden = False
-        self.show_overlay()
-
-    def pipeline_stopped(self) -> None:
-        self._idle.stop()
-        self.setWindowOpacity(1.0)
-
-    def set_reply_enabled(self, on: bool) -> None:
+    def set_reply_enabled(self, on: bool, notify_main: bool = True) -> None:
+        """显示/隐藏回话输入条（受 settings.reply_enabled 控制）。"""
         self._reply_panel.setVisible(on)
-        if on:
-            # 回话需要键盘输入，自动切到固定态
-            if not self.pinned():
-                self.set_pinned(True)
+        if on and not self.pinned():
+            # 回话需要键盘输入，自动切到固定态（notify_main=False 避免与主窗口互相回调）
+            self.set_pinned(True, notify_main=notify_main)
 
     # ---------------------------------------------------------- 数据
-    def apply_snapshot(self, snaps: list[dict]) -> None:
+    def push_lines(self, rows: list[dict]) -> None:
+        """推入一批译文行（按需截图翻译的结果）。
+
+        每行：``{"key": 行身份, "text": 原文, "translated": 译文, "pending": bool}``。
+        **同 key 原地更新、不新增行**（同文去重）；累计行数受 ``settings.max_entries``
+        限制，超出时淘汰最早的行。旧版 ``apply_snapshot`` 是"整屏快照、消失即删"，
+        那是实时巡逻的语义，与按需截图的历史累积不符，故改写为 upsert。
+        """
         s = self.ctx.settings
-        # 新内容时唤醒
+        # 有新内容时唤醒（用户手动隐藏过就不打扰）
         if not self.isVisible() and not self._user_hidden:
             self.show_overlay()
-        order: list[str] = []
-        for i, d in enumerate(snaps):
-            key = d["key"]
-            order.append(key)
+        for d in rows:
+            key = str(d.get("key") or d.get("text") or "").strip()
+            if not key:
+                continue
             row = self._rows.get(key)
             if row is None:
                 row = self._make_row()
-                self._rows_lay.insertWidget(i, row)
+                self._rows_lay.insertWidget(self._rows_lay.count() - 1, row)  # 末尾 stretch 之前
                 self._rows[key] = row
-            else:
-                cur = self._rows_lay.indexOf(row)
-                if cur != i:
-                    self._rows_lay.removeWidget(row)
-                    self._rows_lay.insertWidget(i, row)
             self._update_row(row, d, s)
-        # 移除已消失的行
-        for key in list(self._rows):
-            if key not in order:
-                row = self._rows.pop(key)
-                row.setParent(None)
-                row.deleteLater()
+        self._evict_over_max()
         self._update_count()
         if self._auto_scroll:
             sb = self._scroll.verticalScrollBar()
             QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
         self._bump_idle()
+
+    def _evict_over_max(self) -> None:
+        """超过 settings.max_entries 时淘汰最早的行（dict 保序 = 插入顺序）。"""
+        limit = int(self.ctx.settings.max_entries or 0)
+        if limit <= 0:
+            return
+        while len(self._rows) > limit:
+            key = next(iter(self._rows))
+            row = self._rows.pop(key)
+            row.setParent(None)
+            row.deleteLater()
 
     def _make_row(self) -> QFrame:
         row = QFrame()
@@ -491,7 +525,7 @@ class OverlayWindow(QWidget):
         orig_color, trans_color, pend_color = c["muted"], c["text"], c["warn"]
         if pending:
             body = (
-                f'<span style="color:{pend_color}">… 翻译中 …</span>'
+                f'<span style="color:{pend_color}">{t("ov.pending")}</span>'
                 + (f'<br/><span style="color:{orig_color}">{html.escape(text)}</span>' if s.show_original else "")
             )
         else:
@@ -504,8 +538,8 @@ class OverlayWindow(QWidget):
 
     def _update_count(self) -> None:
         n = len(self._rows)
-        region = self.ctx.settings.region
-        info = f"{n} 行"
+        region = self.ctx.settings.snap_region
+        info = t("ov.lines", n=n)
         if region and region.get("label"):
             info += f" · {region['label']}"
         self._count.setText(info)
@@ -584,12 +618,12 @@ class OverlayWindow(QWidget):
     def _show_menu(self, pos) -> None:
         menu = QMenu(self)
         spicy_on = bool(self.ctx.settings.spicy_mode)
-        act_pin = menu.addAction("回到穿透/未固定" if self.pinned() else "固定（可交互拖动）")
-        act_spicy = menu.addAction("关闭嘴臭模式(恢复正常)" if spicy_on else "开启嘴臭模式")
+        act_pin = menu.addAction(t("ov.menu.unpin") if self.pinned() else t("ov.menu.pin"))
+        act_spicy = menu.addAction(t("ov.menu.spicy_off") if spicy_on else t("ov.menu.spicy_on"))
         menu.addSeparator()
-        act_copy = menu.addAction("复制全部译文")
-        act_clear = menu.addAction("清空")
-        act_hide = menu.addAction("隐藏悬浮框")
+        act_copy = menu.addAction(t("ov.menu.copy"))
+        act_clear = menu.addAction(t("ov.menu.clear"))
+        act_hide = menu.addAction(t("ov.menu.hide"))
         act = menu.exec(self._wrap.mapToGlobal(pos))
         if act == act_pin:
             self.set_pinned(not self.pinned())
@@ -621,12 +655,12 @@ class OverlayWindow(QWidget):
                     lines.append(t)
         text = "\n".join(lines)
         if not text:
-            self._show_toast("没有可复制的内容（当前无译文行）", 3000)
+            self._show_toast(t("ov.toast.nothing"), 3000)
             return
         from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(text)
-        self._show_toast(f"✅ 已复制 {len(lines)} 行译文", 3000)
+        self._show_toast(t("ov.toast.copied_rows", n=len(lines)), 3000)
 
     # ---------------------------------------------------------- 回话（问答对）
     def _send_reply(self) -> None:
@@ -639,10 +673,10 @@ class OverlayWindow(QWidget):
         self._reply_busy = True
         self._reply_btn.setEnabled(False)
         self._reply_input.clear()
-        self._reply_input.setPlaceholderText("翻译中…")
+        self._reply_input.setPlaceholderText(t("ov.reply.busy"))
         handler = getattr(self.ctx, "translate_reply_async", None)
         if handler is None:
-            self._reply_input.setPlaceholderText("回话功能不可用")
+            self._reply_input.setPlaceholderText(t("ov.reply.unavailable"))
             self._reply_busy = False
             self._reply_btn.setEnabled(True)
             return
@@ -650,14 +684,14 @@ class OverlayWindow(QWidget):
         def done(ok: bool, result: str):
             self._reply_busy = False
             self._reply_btn.setEnabled(True)
-            self._reply_input.setPlaceholderText("输入中文回话，Enter 翻译…")
+            self._reply_input.setPlaceholderText(t("ov.reply.ph"))
             if ok:
                 self._add_exchange(text, result, target)
                 if self.ctx.settings.auto_copy_reply:
                     self._copy_to_clipboard(result)
-                    self._show_toast("✅ 回复已生成并复制到剪贴板，回游戏 Ctrl+V 粘贴发送", 5000)
+                    self._show_toast(t("ov.toast.reply_copied"), 5000)
             else:
-                self._show_toast(f"翻译失败：{result[:80]}", 5000)
+                self._show_toast(t("ov.toast.reply_fail", msg=str(result)[:80]), 5000)
 
         handler(text, target, done)
 
@@ -665,25 +699,27 @@ class OverlayWindow(QWidget):
     MAX_EXCHANGES = 8
 
     def clear_exchanges(self) -> None:
+        self._exchanges.clear()
+        self._rebuild_exchanges()
+
+    def _rebuild_exchanges(self) -> None:
+        """按 self._exchanges 重建问答记录区（切换语言时也要重建以刷新按钮文案）。"""
         while self._exch_lay.count() > 1:  # 保留末尾 stretch
             item = self._exch_lay.takeAt(0)
             w = item.widget()
             if w is not None:
                 w.setParent(None)
                 w.deleteLater()
+        for original, reply, target in self._exchanges:
+            card = self._make_exchange_row(original, reply, target)
+            self._exch_lay.insertWidget(self._exch_lay.count() - 1, card)
 
     def _add_exchange(self, original: str, reply: str, target: str) -> None:
-        # 超过上限移除最早一条
-        widgets = [self._exch_lay.itemAt(i).widget() for i in range(self._exch_lay.count() - 1)]
-        widgets = [w for w in widgets if w is not None]
-        while len(widgets) >= self.MAX_EXCHANGES:
-            w = widgets.pop(0)
-            self._exch_lay.removeWidget(w)
-            w.setParent(None)
-            w.deleteLater()
-
-        card = self._make_exchange_row(original, reply, target)
-        self._exch_lay.insertWidget(self._exch_lay.count() - 1, card)
+        """记录一条问答对；超过 MAX_EXCHANGES 时丢弃最早一条。"""
+        self._exchanges.append((original, reply, target))
+        while len(self._exchanges) > self.MAX_EXCHANGES:
+            self._exchanges.pop(0)
+        self._rebuild_exchanges()
         sb = self._exch_scroll.verticalScrollBar()
         QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
         self._bump_idle()
@@ -723,13 +759,13 @@ class OverlayWindow(QWidget):
         tag.setStyleSheet(f"color:{c['accent']};font-size:11px;")
         brow.addWidget(tag)
         brow.addStretch(1)
-        b_copy = QPushButton("一键复制译文", card)
+        b_copy = QPushButton(t("ov.exch.copy_reply"), card)
         b_copy.setObjectName("ovBtn")
-        b_copy.setToolTip("把生成的回复复制到剪贴板")
-        b_copy.clicked.connect(lambda: self._copy_to_clipboard(reply, "✅ 已复制译文"))
-        b_orig = QPushButton("复制原文", card)
+        b_copy.setToolTip(t("ov.exch.copy_reply.tip"))
+        b_copy.clicked.connect(lambda: self._copy_to_clipboard(reply, t("ov.toast.copied_reply")))
+        b_orig = QPushButton(t("ov.exch.copy_orig"), card)
         b_orig.setObjectName("ovBtn")
-        b_orig.clicked.connect(lambda: self._copy_to_clipboard(original, "✅ 已复制原文"))
+        b_orig.clicked.connect(lambda: self._copy_to_clipboard(original, t("ov.toast.copied_orig")))
         brow.addWidget(b_orig)
         brow.addWidget(b_copy)
         lay.addLayout(brow)

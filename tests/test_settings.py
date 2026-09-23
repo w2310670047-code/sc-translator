@@ -7,12 +7,12 @@ def test_settings_roundtrip(tmp_home):
     s = Settings().load()
     s.api_base = "https://example.com/v1"
     s.model = "test-model"
-    s.region = {"logical": {"x": 1, "y": 2, "w": 3, "h": 4}, "physical": {"left": 1}, "dpr": 1.0, "label": "屏幕1"}
+    s.overlay_geometry = {"x": 1, "y": 2, "w": 3, "h": 4}
     s.save()
     s2 = Settings().load()
     assert s2.api_base == "https://example.com/v1"
     assert s2.model == "test-model"
-    assert s2.region["logical"]["w"] == 3
+    assert s2.overlay_geometry["w"] == 3
 
 
 def test_api_key_dpapi_roundtrip(tmp_home):

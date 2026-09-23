@@ -1,7 +1,8 @@
-"""应用装配与生命周期（纯文字翻译版）。
+"""应用装配与生命周期。
 
-只创建主窗口与翻译客户端相关对象；屏幕 OCR / 悬浮窗 / 采样管线已不在运行路径中，
-以便打包体积最小、启动最快。
+装配主窗口、翻译客户端与**译文悬浮框**（常驻置顶，按需截图翻译的结果推给它）；
+屏幕 OCR 只在按需截图翻译时懒加载（snapshot）。早期的实时巡逻采样管线
+（pipeline / patrol）已删除——以保证打包体积最小、启动最快。
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Callable, Optional
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QApplication
 
-from . import APP_DISPLAY_NAME, __version__
+from . import APP_DISPLAY_NAME, DEFAULT_MODEL, __version__
 from .logger_setup import setup_logging
 from .settings import Settings
 from .translate.cache import TranslationCache
@@ -45,7 +46,7 @@ class AppController:
         self._cache: Optional[TranslationCache] = None
         self._threads: list[threading.Thread] = []
 
-        # 兼容字段（屏幕悬浮窗已移除）
+        # 译文悬浮框（常驻置顶）：这里只置空，实际对象在 init_ui() 里创建
         self.overlay = None
         self.mainwin = None
         # 按需截图翻译服务（热键触发；重型依赖在里面懒加载）
@@ -72,8 +73,24 @@ class AppController:
 
         self.mainwin = MainWindow(self)
         self.mainwin.setStyleSheet(build_stylesheet(self.settings.theme))
+        self.ensure_overlay()
         # 窗口是热键消息的宿主，重建后必须重新注册
         self.install_hotkeys()
+
+    def ensure_overlay(self):
+        """创建（或复用）译文悬浮框。
+
+        切界面语言会重建主窗口，但浮窗**不重建**——只刷新文案，避免译文历史丢失。
+        """
+        from .ui.overlay import OverlayWindow
+
+        if self.overlay is None:
+            self.overlay = OverlayWindow(self)
+        else:
+            self.overlay.apply_theme()
+            self.overlay.retranslate()
+        self.overlay.set_reply_enabled(bool(self.settings.reply_enabled))
+        return self.overlay
 
     def set_ui_language(self, code: str) -> None:
         """切换界面语言：落盘 + 立即重建窗口（保留尺寸位置）。"""
@@ -109,7 +126,7 @@ class AppController:
         opts = ClientOptions(
             api_base=self.settings.api_base,
             api_key=self.settings.load_api_key(),
-            model=self.settings.model or "deepseek-chat",
+            model=self.settings.model or DEFAULT_MODEL,
             spicy=bool(self.settings.spicy_mode),
         )
         return OpenAiCompatClient(opts, cache=self.cache if use_cache else None)
@@ -127,6 +144,28 @@ class AppController:
         t = threading.Thread(target=runner, daemon=True)
         self._threads.append(t)
         t.start()
+
+    def translate_reply_async(self, text: str, target: str, done: Callable[[bool, object], None]) -> None:
+        """浮窗回话：后台翻译一条中文，完成后在主线程回调 ``done(ok, result)``。
+
+        失败时把异常转成字符串再回调——悬浮框会对 result 直接做截断显示。
+        """
+        if not (text or "").strip():
+            return
+        if not self.settings.load_api_key():
+            from .i18n import t as _t
+
+            done(False, _t("ov.reply.no_key"))
+            return
+
+        def work() -> str:
+            client = self.make_client(use_cache=False)
+            return client.translate_reply(text, target, spicy=bool(self.settings.spicy_mode))
+
+        def cb(ok: bool, value: object) -> None:
+            done(ok, value if ok else str(value))
+
+        self.run_in_thread(work, cb)
 
     # ------------------------------------------------------- 词典/术语表
     def apply_dict(self) -> None:
@@ -292,4 +331,10 @@ class AppController:
                 self._snap.close()
             except Exception as exc:  # noqa: BLE001
                 log.warning("截图服务清理异常: %s", exc)
+        if self.overlay is not None:
+            try:
+                self.overlay.hide_overlay()
+                self.overlay.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("浮窗清理异常: %s", exc)
         log.info("应用退出")

@@ -238,6 +238,7 @@ def _doctor(online: bool) -> int:
     if online:
 
         def _api():
+            from . import DEFAULT_MODEL
             from .settings import Settings
             from .translate.client import ClientOptions, OpenAiCompatClient
 
@@ -248,7 +249,7 @@ def _doctor(online: bool) -> int:
             opts = ClientOptions(
                 api_base=s.api_base,
                 api_key=key,
-                model=s.model or "deepseek-chat",
+                model=s.model or DEFAULT_MODEL,
                 spicy=bool(s.spicy_mode),
             )
             client = OpenAiCompatClient(opts)

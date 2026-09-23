@@ -55,29 +55,6 @@ def test_rapidocr_reads_synthetic_game_text(tmp_home):
     assert hits >= 2, f"OCR 识别内容与期望偏差较大: {joined}"
 
 
-def test_full_pipeline_headless():
-    """Pipeline + 假翻译：合成截图行 -> 稳定 -> 翻译回填。"""
-    from sc_translator.ocr import OcrEngine
-    from sc_translator.pipeline import Pipeline, PipelineSettings
-
-    engine = OcrEngine()
-    bgr = _synthetic_screenshot()
-    lines = engine.recognize(bgr)
-
-    ps = PipelineSettings(stable_frames=1)
-    p = Pipeline(ps)
-    p.feed(lines)  # stable_frames=1 -> 直接提交
-    p.feed(lines)  # 第二次帧也相同
-    assert p.visible_entries(), "没有稳定行提交"
-    # 假翻译
-    fake = {"Quantum travel to crusader": "量子跃迁至克雷瑟"}
-    for norm in p.pending_texts():
-        out = fake.get(norm.lower(), f"译文:{norm}")
-        p.apply_translation(norm, out)
-    snap = p.snapshot()
-    assert any(e["pending"] is False and e["translated"] for e in snap)
-
-
 def _qt_app():
     from PySide6.QtWidgets import QApplication
 
@@ -147,11 +124,12 @@ class _FakeClient:
 
 
 def test_text_translator_ui_assembly(qapp, tmp_home):
-    """纯文本翻译器：双语输入区/结果区齐备，且屏幕翻译相关控件已移除。"""
+    """纯文本翻译器：双语输入区/结果区齐备，且屏幕实时翻译控件仍未接回。"""
     ctrl = _mk_ctrl(qapp, tmp_home)
     win = ctrl.mainwin
     assert win is not None
-    assert ctrl.overlay is None, "悬浮窗已下线，不应再构建 overlay"
+    assert ctrl.overlay is not None, "译文悬浮框应随主窗口一起装配（0.4.0 下线后已重新接线）"
+    assert not ctrl.overlay.isVisible(), "浮窗默认不显示"
     assert hasattr(win, "_in_en") and hasattr(win, "_out_zh")
     assert hasattr(win, "_result_en") and hasattr(win, "_spicy")
     assert win._reply_target.count() >= 3, "目标语言应含英语/日语/韩语"
@@ -354,6 +332,24 @@ def test_reply_output_code_only_needs_no_api(qapp, tmp_home):
     assert fake.calls == [], "只发中文码时不应调用翻译接口"
     assert "Ctrl+V" in win._status.text(), win._status.text()
     ctrl.shutdown()
+
+
+def test_reply_target_persists_across_restart(qapp, tmp_home):
+    """回话目标语言要落盘并在窗口重建后恢复（此前界面既不恢复也不写回，F7）。"""
+    from sc_translator.settings import Settings
+
+    ctrl = _mk_ctrl(qapp, tmp_home, reply_target="Korean")
+    win = ctrl.mainwin
+    assert win._reply_target.currentText() == "Korean", "应恢复上次选择的目标语言"
+
+    win._reply_target.setCurrentText("Japanese")
+    assert ctrl.settings.reply_target == "Japanese", "切换后应立即落盘"
+    assert Settings().load().reply_target == "Japanese", "并写入 settings.json"
+    ctrl.shutdown()
+
+    ctrl2 = _mk_ctrl(qapp, tmp_home)
+    assert ctrl2.mainwin._reply_target.currentText() == "Japanese", "重建窗口后仍应保持"
+    ctrl2.shutdown()
 
 
 def test_reply_output_code_only_without_table_warns(qapp, tmp_home, monkeypatch):

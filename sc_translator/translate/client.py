@@ -10,6 +10,7 @@ from typing import Callable, Optional
 
 import requests
 
+from .. import DEFAULT_MODEL
 from .. import prompts as prompt_files
 from .. import exchange_log
 from .. import glossary
@@ -53,7 +54,7 @@ class ApiError(RuntimeError):
 class ClientOptions:
     api_base: str = "https://api.deepseek.com"
     api_key: str = ""
-    model: str = "deepseek-chat"
+    model: str = DEFAULT_MODEL
     timeout_s: int = 90
     max_retries: int = 3
     retry_base_s: float = 0.6
@@ -186,7 +187,7 @@ class OpenAiCompatClient:
 
     def _chat(self, messages: list[dict], temperature: float = 0.3, max_tokens: int = 512) -> str:
         prefix = self.resolve_prefix()
-        model = self.opts.model or "deepseek-chat"
+        model = self.opts.model or DEFAULT_MODEL
         payload = {
             "model": model,
             "messages": messages,
@@ -264,7 +265,7 @@ class OpenAiCompatClient:
         return base
 
     def _cache_model(self) -> str:
-        parts = [self.opts.model or "deepseek-chat"]
+        parts = [self.opts.model or DEFAULT_MODEL]
         if self.opts.spicy:
             parts.append("#spicy")
         return "".join(parts)
@@ -280,7 +281,7 @@ class OpenAiCompatClient:
         # 已经是目标中文的内容直接原样返回，不浪费 API
         if target_lang.lower().startswith("zh") and _cjk_ratio(text) > 0.55:
             return text
-        model = self.opts.model or "deepseek-chat"
+        model = self.opts.model or DEFAULT_MODEL
         style = "spicy" if self.opts.spicy else "normal"
         cache_model = self._cache_model() + ("#chat" if keep_chat_prefix else "")
         # 词典优先：静态 UI 词条直接命中，零 API
@@ -368,7 +369,7 @@ class OpenAiCompatClient:
         if not todo_idx:
             return results
 
-        model = self.opts.model or "deepseek-chat"
+        model = self.opts.model or DEFAULT_MODEL
         lines = [texts[i] for i in todo_idx]
         numbered = "\n".join(f"{k + 1}. {t}" for k, t in enumerate(lines))
         messages = [
@@ -422,7 +423,7 @@ class OpenAiCompatClient:
             {"role": "system", "content": system},
             {"role": "user", "content": text},
         ]
-        model = self.opts.model or "deepseek-chat"
+        model = self.opts.model or DEFAULT_MODEL
         style = "spicy" if spicy else "normal"
         try:
             out = self._chat(messages, temperature=0.4, max_tokens=max(256, int(len(text) * 3)))

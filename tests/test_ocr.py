@@ -51,7 +51,7 @@ def test_cluster_splits_into_visual_lines_and_sorts():
 
 
 def test_meaningless_filter_length():
-    # 空/太短内容不构成有效行（由 pipeline 的 _meaningful 保证，此处验证 normalizer 边界）
+    # 空/太短内容不构成有效行（有效行过滤现由 snapshot.filter_lines 负责，此处验证 normalizer 边界）
     assert normalize_text("") == ""
 
 

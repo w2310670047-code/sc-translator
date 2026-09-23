@@ -21,3 +21,7 @@ tokens.txt
 # DSH vision-router artifacts / temp screenshots (local run traces, never publish)
 .dsh-vision-router/
 *.present.png
+
+# 执行报告：只存本地，不入库（元机制记录，不属于产品代码）
+执行报告-首次运行.md
+执行报告-变更记录.md

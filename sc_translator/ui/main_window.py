@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__
+from .. import DEFAULT_MODEL, __version__
 from .. import i18n
 from ..i18n import t
 from ..paths import logs_dir
@@ -193,6 +193,12 @@ class MainWindow(QMainWindow):
         self._reply_target = QComboBox()
         self._reply_target.addItems(["English", "Japanese", "Korean"])
         self._reply_target.setFixedWidth(110)
+        # 恢复上次选择：设置里虽存了 reply_target，此前界面既不恢复也不写回，
+        # 于是选 Japanese/Korean 后重启会悄悄回到 English。
+        idx = self._reply_target.findText(str(s.reply_target or ""))
+        if idx >= 0:
+            self._reply_target.setCurrentIndex(idx)
+        self._reply_target.currentTextChanged.connect(self._save_reply_target)
         row2.addWidget(self._reply_target)
         self._btn_reply = QPushButton(t("btn.translate_copy"))
         self._btn_reply.clicked.connect(self._translate_reply)
@@ -328,6 +334,41 @@ class MainWindow(QMainWindow):
         srow.addStretch(1)
         snap.addLayout(srow)
 
+        # 结果显示位置：常驻悬浮窗 / 鼠标旁浮窗（两个都关=只写主窗口结果区，手动复制）
+        drow = QHBoxLayout()
+        drow.addWidget(QLabel(t("snap.col_out")))
+        self._snap_overlay = QCheckBox(t("chk.snap_overlay"))
+        self._snap_overlay.setChecked(bool(s.snap_show_overlay))
+        self._snap_overlay.setToolTip(t("chk.snap_overlay.tip"))
+        self._snap_overlay.toggled.connect(self._on_snap_overlay_toggled)
+        drow.addWidget(self._snap_overlay)
+        self._snap_popup = QCheckBox(t("chk.snap_popup"))
+        self._snap_popup.setChecked(bool(s.snap_show_popup))
+        self._snap_popup.setToolTip(t("chk.snap_popup.tip", sec=int(s.snap_popup_sec or 0)))
+        self._snap_popup.toggled.connect(self._on_snap_popup_toggled)
+        drow.addWidget(self._snap_popup)
+        drow.addStretch(1)
+        snap.addLayout(drow)
+
+        # 浮窗相关：回话输入条 / 自动复制 / 手动叫回浮窗（在浮窗里点过 ✕ 之后用）
+        orow = QHBoxLayout()
+        self._ov_reply = QCheckBox(t("chk.ov_reply"))
+        self._ov_reply.setChecked(bool(s.reply_enabled))
+        self._ov_reply.setToolTip(t("chk.ov_reply.tip"))
+        self._ov_reply.toggled.connect(self._on_ov_reply_toggled)
+        orow.addWidget(self._ov_reply)
+        self._ov_autocopy = QCheckBox(t("chk.ov_autocopy"))
+        self._ov_autocopy.setChecked(bool(s.auto_copy_reply))
+        self._ov_autocopy.setToolTip(t("chk.ov_autocopy.tip"))
+        self._ov_autocopy.toggled.connect(self._on_ov_autocopy_toggled)
+        orow.addWidget(self._ov_autocopy)
+        self._btn_ov_show = QPushButton(t("ov.show"))
+        self._btn_ov_show.setToolTip(t("ov.show.tip"))
+        self._btn_ov_show.clicked.connect(self._show_overlay)
+        orow.addWidget(self._btn_ov_show)
+        orow.addStretch(1)
+        snap.addLayout(orow)
+
         self._snap_state = QLabel("…")
         self._snap_state.setObjectName("hint")
         snap.addWidget(self._snap_state)
@@ -402,6 +443,66 @@ class MainWindow(QMainWindow):
             self.app.remove_hotkeys()
             self._set_status(t("snap.status_off"))
         self._refresh_snap_state()
+
+    def _push_overlay_rows(self, pairs) -> None:
+        """把本次截图翻译结果推给常驻浮窗（同文原地更新，不重复占行）。
+
+        受「常驻悬浮窗」开关控制；关掉时结果仍写主窗口结果区（可手动复制）。
+        """
+        if not self.app.settings.snap_show_overlay:
+            return
+        ov = getattr(self.app, "overlay", None)
+        if ov is None:
+            return
+        try:
+            ov.push_lines(
+                [{"key": src, "text": src, "translated": dst, "pending": False} for src, dst in pairs]
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("推送浮窗失败（忽略）: %s", exc)
+
+    def _show_overlay(self) -> None:
+        """显示译文悬浮框（在浮窗里点过 ✕ 之后，靠这个按钮把它叫回来）。"""
+        try:
+            self.app.ensure_overlay().show_overlay()
+        except Exception as exc:  # noqa: BLE001
+            self._set_status(t("ov.show_fail", msg=exc))
+
+    def _on_ov_reply_toggled(self, on: bool) -> None:
+        """浮窗回话输入条开关：落盘并即时生效。"""
+        s = self.app.settings
+        s.reply_enabled = bool(on)
+        s.save()
+        ov = getattr(self.app, "overlay", None)
+        if ov is not None:
+            ov.set_reply_enabled(bool(on), notify_main=False)
+
+    def _on_ov_autocopy_toggled(self, on: bool) -> None:
+        """浮窗回话译文自动复制开关：落盘（浮窗回话时实时读取该设置）。"""
+        s = self.app.settings
+        s.auto_copy_reply = bool(on)
+        s.save()
+
+    def _on_snap_overlay_toggled(self, on: bool) -> None:
+        """常驻悬浮窗开关：落盘；关掉时立即收起，打开时立即露出（否则看不出开了什么）。"""
+        s = self.app.settings
+        s.snap_show_overlay = bool(on)
+        s.save()
+        ov = getattr(self.app, "overlay", None)
+        if ov is None:
+            return
+        if on:
+            ov.show_overlay()
+        else:
+            ov.hide_overlay()
+
+    def _on_snap_popup_toggled(self, on: bool) -> None:
+        """鼠标旁快看浮窗开关：落盘；关掉时把已经弹出的那个收起。"""
+        s = self.app.settings
+        s.snap_show_popup = bool(on)
+        s.save()
+        if not on and getattr(self, "_popup", None) is not None:
+            self._popup.hide_popup()
 
     # ---- 热键录入 ----
     def _begin_hotkey_edit(self) -> None:
@@ -506,6 +607,8 @@ class MainWindow(QMainWindow):
         if pairs and s.snap_write_main:
             self._snap_src.setPlainText("\n".join(a for a, _ in pairs))
             self._snap_dst.setPlainText("\n".join(b for _, b in pairs))
+        if pairs:
+            self._push_overlay_rows(pairs)
         if not pairs:
             self._set_status(note or t("snap.no_text"))
         else:
@@ -774,7 +877,7 @@ class MainWindow(QMainWindow):
         if not self._persist_api():
             return None
         client = self.app.make_client(use_cache=False)
-        client.opts.model = self._model.currentText().strip() or "deepseek-chat"
+        client.opts.model = self._model.currentText().strip() or DEFAULT_MODEL
         return client
 
     def _gc_encode(self) -> None:
@@ -908,13 +1011,18 @@ class MainWindow(QMainWindow):
         self.app.settings.model = self._model.currentText().strip()
         self.app.settings.save()
 
+    def _save_reply_target(self, text: str) -> None:
+        """回话目标语言落盘（此前界面既不恢复也不写回，选完重启就丢）。"""
+        self.app.settings.reply_target = str(text)
+        self.app.settings.save()
+
     def _persist_api(self) -> bool:
         key = self._keyline.text().strip()
         if not key:
             QMessageBox.warning(self, t("dlg.no_key.title"), t("dlg.no_key.body"))
             return False
         self.app.settings.api_base = self._api_base.text().strip()
-        self.app.settings.model = self._model.currentText().strip() or "deepseek-chat"
+        self.app.settings.model = self._model.currentText().strip() or DEFAULT_MODEL
         self.app.save_api_key(key)
         self.app.settings.save()
         return True
@@ -953,7 +1061,7 @@ class MainWindow(QMainWindow):
         self._btn_test.setEnabled(False)
         self._btn_test.setText(t("btn.testing"))
         client = self.app.make_client(use_cache=False)
-        client.opts.model = self._model.currentText().strip() or "deepseek-chat"
+        client.opts.model = self._model.currentText().strip() or DEFAULT_MODEL
 
         def work():
             return client.translate_line("Hello, this is a translation test.", "en", "zh-CN")
@@ -1038,7 +1146,7 @@ class MainWindow(QMainWindow):
         if not self._persist_api():
             return
         client = self.app.make_client(use_cache=True)
-        client.opts.model = self._model.currentText().strip() or "deepseek-chat"
+        client.opts.model = self._model.currentText().strip() or DEFAULT_MODEL
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
         def work():
@@ -1071,7 +1179,7 @@ class MainWindow(QMainWindow):
         if not self._persist_api():
             return
         client = self.app.make_client(use_cache=False)
-        client.opts.model = self._model.currentText().strip() or "deepseek-chat"
+        client.opts.model = self._model.currentText().strip() or DEFAULT_MODEL
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
 
         def work():
@@ -1169,21 +1277,32 @@ class MainWindow(QMainWindow):
     def _set_status(self, text: str) -> None:
         self._status.setText(text)
 
-    # ---------------- AppController 兼容桩 ----------------
-    def _refresh_region_desc(self) -> None:
-        pass
-
+    # ---------------- 与浮窗的双向同步 ----------------
     def refresh_overlay_controls(self) -> None:
-        pass
+        """浮窗侧改了状态（嘴臭/固定/穿透）→ 回同步主窗口控件，并刷新浮窗文案与主题。
 
-    def on_running_changed(self, running: bool) -> None:
-        pass
-
-    def on_status(self, counters: dict) -> None:
-        pass
-
-    def on_error(self, msg: str) -> None:
-        self._set_status(f"异常：{msg}")
+        旧版这里是空桩（浮窗已下线）；现在由 OverlayWindow 在设置变更后回调。
+        """
+        s = self.app.settings
+        blk = self._spicy.blockSignals(True)
+        self._spicy.setChecked(bool(s.spicy_mode))
+        self._spicy.blockSignals(blk)
+        for box, value in (
+            (getattr(self, "_ov_reply", None), bool(s.reply_enabled)),
+            (getattr(self, "_ov_autocopy", None), bool(s.auto_copy_reply)),
+            (getattr(self, "_snap_overlay", None), bool(s.snap_show_overlay)),
+            (getattr(self, "_snap_popup", None), bool(s.snap_show_popup)),
+        ):
+            if box is None:
+                continue
+            blk = box.blockSignals(True)
+            box.setChecked(value)
+            box.blockSignals(blk)
+        ov = getattr(self.app, "overlay", None)
+        if ov is not None:
+            ov.apply_theme()
+            ov.retranslate()
+            ov.set_reply_enabled(bool(s.reply_enabled), notify_main=False)
 
     def _open_logs(self) -> None:
         try:

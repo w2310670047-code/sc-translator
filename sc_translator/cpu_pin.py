@@ -1,10 +1,16 @@
-"""CPU 亲和：把进程强制绑定到单个逻辑核，混合架构优先绑定小核(E-core/效率核)。
+"""CPU 亲和：把进程绑定到最不抢游戏资源的逻辑核上（OCR/后台负载）。
 
-背景：OCR/采样属于后台负载，默认会散布到所有逻辑核（含大核），
-在游戏机上会与大核上跑的游戏抢资源。这里把整个进程钉在一个核上：
-- 优先挑选 EfficiencyClass 最小的核（小核/效率核，如 Intel E-core）；
-- 只有单一效率等级（普通 CPU）时绑定任意一个核；
-- 绑定范围取系统当前允许的掩码的交集，失败只记日志、不影响运行。
+规则（按用户要求）：
+- 有大小核之分时：**固定 1 个小核/效率核**（EfficiencyClass 最小者）；
+- 没有小核（单一效率等级）时：**最多占 2 个逻辑处理器**，且必须来自**不同物理核**
+  （绝不取同一物理核的两个超线程）；
+- **严禁占用整个 CPU**：若选出的掩码等于系统允许的全部逻辑处理器（例如整机只有 1~2 个逻辑核），
+  则放弃绑定，而不是独占整机；
+- 取不到拓扑信息时退回"系统允许掩码里编号最低的单个逻辑核"；
+- 绑定失败只记日志、不影响运行。
+
+实测（本机 i5-14600KF，6P+8E / 20 逻辑核）：E-core 的 EfficiencyClass=0（8 个物理核、每核 1 逻辑核），
+P-core 的 EfficiencyClass=1（6 个物理核、每核 2 逻辑核）——所以"取最小"就是固定小核。
 
 可用环境变量：
   SC_TRANSLATOR_CPU_PIN=0   关闭（配合设置开关）
@@ -21,6 +27,9 @@ log = logging.getLogger(__name__)
 
 RELATION_PROCESSOR_CORE = 0
 ERROR_INSUFFICIENT_BUFFER = 122
+
+# 没有小核时的上限：最多占几个逻辑处理器（用户要求 ≤2）
+FALLBACK_MAX_LOGICAL = 2
 
 _k32 = ctypes.windll.kernel32 if hasattr(ctypes, "windll") and hasattr(ctypes.windll, "kernel32") else None
 
@@ -81,14 +90,19 @@ def _query_cores() -> list[tuple[int, int]]:
     while off + 8 <= len(blob):
         rel = int.from_bytes(blob[off:off + 4], "little")
         rec_size = int.from_bytes(blob[off + 4:off + 8], "little")
-        if rel == RELATION_PROCESSOR_CORE and off + 9 < len(blob):
-            efficiency = blob[off + 9]                       # Flags@+8, EfficiencyClass@+9
-            grp_off = off + 8 + 1 + 20                       # PROCESSOR_RELATIONSHIP 后接 GROUP_AFFINITY
-            if grp_off + 10 <= len(blob):
-                mask = int.from_bytes(blob[grp_off:grp_off + 8], "little")
-                group = int.from_bytes(blob[grp_off + 8:grp_off + 10], "little")
-                if group == 0 and mask:
-                    cores.append((efficiency, mask))
+        # PROCESSOR_RELATIONSHIP 布局（winnt.h，相对联合体起点 body = off+8）：
+        #   Flags(1) + EfficiencyClass(1) + Reserved[20] + GroupCount(2) + GroupMask[0]{Mask(8), Group(2)}
+        #   => GroupCount @ body+22、GroupMask[0].Mask @ body+24、GroupMask[0].Group @ body+32
+        # 旧实现把 Mask 起点写成 off+29（早 3 字节），读出的值 = 真实掩码<<24 | GroupCount<<8，
+        # 于是每个核都多出一个假 bit 8、真实掩码还丢高位 —— 结果是"固定小核"实际固定到了逻辑核 8
+        # （本机逻辑核 8 属 P-core），正是要避开的大核。此处按真实布局修正。
+        body = off + 8
+        if rel == RELATION_PROCESSOR_CORE and body + 34 <= len(blob):
+            efficiency = blob[body + 1]
+            mask = int.from_bytes(blob[body + 24:body + 32], "little")
+            group = int.from_bytes(blob[body + 32:body + 34], "little")
+            if group == 0 and mask:
+                cores.append((efficiency, mask))
         if rec_size < 8:
             break
         off += rec_size
@@ -110,32 +124,63 @@ def _lowest_bit_index(mask: int) -> int:
     return m.bit_length() - 1 if m else -1
 
 
+def _one_bit_per_core(cores: list[tuple[int, int]], allowed: int, limit: int) -> int:
+    """每个物理核只取 1 个逻辑处理器（**绝不取同一物理核的两个超线程**），最多 limit 个。
+
+    按各核掩码里最低逻辑核编号排序，结果稳定可预期。返回合并后的掩码（可能为 0）。
+    """
+    picked = 0
+    taken = 0
+    for _, m in sorted(cores, key=lambda c: _lowest_bit_index(c[1])):
+        avail = m & allowed
+        one = avail & -avail              # 该物理核里编号最低的那个逻辑处理器
+        if not one or (one & picked):
+            continue
+        picked |= one
+        taken += 1
+        if taken >= max(1, limit):
+            break
+    return picked
+
+
 def _choose_mask(prefer_efficient: bool) -> tuple[int, str]:
-    """返回 (affinity_mask, 说明)。"""
+    """返回 (affinity_mask, 说明)。
+
+    - 有大小核之分且 ``prefer_efficient``：**固定 1 个小核**（EfficiencyClass 最小者）；
+    - 否则（无小核）：最多占 ``FALLBACK_MAX_LOGICAL`` 个逻辑处理器，且来自**不同物理核**；
+    - 任何情况下都不返回"等于整机允许掩码"的结果（**严禁占用整个 CPU**）。
+    """
     cores = _query_cores()
     allowed = _system_allowed_mask()
+    if allowed == 0:
+        return 0, ""
     if not cores:
         # 拿不到等级信息：绑系统允许掩码里编号最低的逻辑核
         m = allowed & -allowed
         return m, f"逻辑核 {_lowest_bit_index(m)}（无等级信息，按编号最低）"
-    if prefer_efficient:
-        classes = sorted({e for e, _ in cores})
-        target_class = min(classes)  # 混合 CPU 中小核(E-core)的 EfficiencyClass 更低
+
+    classes = sorted({e for e, _ in cores})
+    hybrid = len(classes) > 1
+    if prefer_efficient and hybrid:
+        target_class = min(classes)       # 实测：小核(E-core) 的 EfficiencyClass 更小
+        cands = [(e, m) for e, m in cores if e == target_class]
+        kind = "小核/效率核"
+        limit = 1                         # 固定小核：只占 1 个逻辑处理器
     else:
         target_class = -1
-    cands = [m for e, m in cores if e == target_class] if target_class >= 0 else [m for _, m in cores]
-    # 在该等级里选掩码编号最低的一个核
-    m = cands[0]
-    for c in cands[1:]:
-        if _lowest_bit_index(c) < _lowest_bit_index(m):
-            m = c
-    final = m & allowed
-    if final == 0:
-        final = allowed & -allowed
-    # 即便核心含超线程两个逻辑处理器，也只绑编号最低的那一个逻辑核
-    final = final & -final
-    kind = "小核/效率核" if prefer_efficient and len({e for e, _ in cores}) > 1 else "普通核"
-    return final, f"{kind}（EfficiencyClass={target_class}）逻辑核 {_lowest_bit_index(final)}"
+        cands = list(cores)
+        kind = "普通核"
+        limit = FALLBACK_MAX_LOGICAL      # 没有小核：最多 2 个，且来自不同物理核
+
+    mask = _one_bit_per_core(cands, allowed, limit)
+    if mask == 0:
+        mask = allowed & -allowed
+    if mask == allowed:
+        # 严禁占用整个 CPU：整机逻辑处理器数不超过上面的限额时，宁可不绑定
+        log.info("系统仅 %d 个逻辑处理器，放弃绑定以免独占整个 CPU", bin(allowed).count("1"))
+        return 0, ""
+    cpus = [i for i in range(64) if mask >> i & 1]
+    return mask, f"{kind}（EfficiencyClass={target_class}）逻辑核 {cpus}"
 
 
 def apply_pin(prefer_efficient: bool = True) -> str:
@@ -157,24 +202,6 @@ def apply_pin(prefer_efficient: bool = True) -> str:
         return ""
     log.info("已把进程绑定到单个 %s", desc)
     return desc
-
-
-def allow_current_thread() -> None:
-    """把【当前线程】放宽到系统允许的全部核（绕过进程单核绑定）。
-
-    用于翻译 worker：本地模型推理需要多核才快，而采样线程保持单小核低占用。
-    """
-    if _k32 is None:
-        return
-    try:
-        if not _prepared:
-            _prepare()
-        sysm = _system_allowed_mask()
-        if sysm:
-            # GetCurrentThread 句柄为 (HANDLE)-2
-            _k32.SetThreadAffinityMask(wintypes.HANDLE(-2), _ULONG_PTR(sysm))
-    except Exception:  # noqa: BLE001
-        pass
 
 
 def apply_from_settings(pin_enabled: bool, prefer_efficient: bool = True) -> str:

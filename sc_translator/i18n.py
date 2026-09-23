@@ -446,6 +446,136 @@ _T: dict[str, tuple[str, str, str]] = {
         "啟動時發生錯誤，詳見日誌：\n",
         "An error occurred during startup — see the log:\n",
     ),
+
+    # ---- 译文悬浮框（常驻置顶，按需截图翻译的结果在此累积）----
+    "ov.title": ("★ SC 译文", "★ SC 譯文", "★ SC translations"),
+    "ov.grip": ("☰ 固定", "☰ 固定", "☰ Pin"),
+    "ov.grip.tip": (
+        "点击：固定悬浮框（可交互/拖动）；按住拖动：移动悬浮框",
+        "點擊：固定懸浮框（可互動／拖動）；按住拖動：移動懸浮框",
+        "Click to pin the overlay (interactive/draggable); drag to move it",
+    ),
+    "ov.pin": ("固定", "固定", "Pin"),
+    "ov.unpin": ("取消固定", "取消固定", "Unpin"),
+    "ov.pin.tip": (
+        "回到鼠标穿透状态（游戏内不挡操作）",
+        "回到滑鼠穿透狀態（遊戲內不擋操作）",
+        "Back to click-through so it does not block the game",
+    ),
+    "ov.hide.tip": (
+        "隐藏悬浮框；之后点主窗口「显示浮窗」可再打开",
+        "隱藏懸浮框；之後點主視窗「顯示懸浮框」可再開啟",
+        "Hide the overlay; use “Show overlay” in the main window to bring it back",
+    ),
+    "ov.show": ("显示浮窗", "顯示懸浮框", "Show overlay"),
+    "ov.show.tip": ("重新显示译文悬浮框", "重新顯示譯文懸浮框", "Re-show the translation overlay"),
+    "ov.show_fail": (
+        "浮窗打开失败：{msg}",
+        "懸浮框開啟失敗：{msg}",
+        "Could not open the overlay: {msg}",
+    ),
+    "ov.spicy.on": ("😤 嘴臭：开", "😤 嘴砲：開", "😤 Spicy: on"),
+    "ov.spicy.off": ("😶 嘴臭：关", "😶 嘴砲：關", "😶 Spicy: off"),
+    "ov.spicy.tip": (
+        "嘴臭模式：开=译文用嘴臭提示词；关=用正常提示词（随开关即时生效）",
+        "嘴砲模式：開=譯文用嘴砲提示詞；關=用正常提示詞（隨開關即時生效）",
+        "Spicy mode: on = spicy prompt, off = normal prompt (effective immediately)",
+    ),
+    "ov.toast.spicy_on": (
+        "嘴臭模式已开启：译文用嘴臭提示词",
+        "嘴砲模式已開啟：譯文用嘴砲提示詞",
+        "Spicy mode on: translations use the spicy prompt",
+    ),
+    "ov.toast.spicy_off": (
+        "嘴臭模式已关闭：恢复正常翻译",
+        "嘴砲模式已關閉：恢復正常翻譯",
+        "Spicy mode off: back to normal translation",
+    ),
+    "ov.pending": ("… 翻译中 …", "… 翻譯中 …", "… translating …"),
+    "ov.lines": ("{n} 行", "{n} 行", "{n} lines"),
+    "ov.menu.unpin": ("回到穿透/未固定", "回到穿透／未固定", "Back to click-through"),
+    "ov.menu.pin": ("固定（可交互拖动）", "固定（可互動拖動）", "Pin (interactive, draggable)"),
+    "ov.menu.spicy_on": ("开启嘴臭模式", "開啟嘴砲模式", "Turn spicy mode on"),
+    "ov.menu.spicy_off": ("关闭嘴臭模式（恢复正常）", "關閉嘴砲模式（恢復正常）", "Turn spicy mode off"),
+    "ov.menu.copy": ("复制全部译文", "複製全部譯文", "Copy all translations"),
+    "ov.menu.clear": ("清空", "清空", "Clear"),
+    "ov.menu.hide": ("隐藏悬浮框", "隱藏懸浮框", "Hide overlay"),
+    "ov.toast.copied_rows": ("✅ 已复制 {n} 行译文", "✅ 已複製 {n} 行譯文", "✅ Copied {n} lines"),
+    "ov.toast.nothing": (
+        "没有可复制的内容（当前无译文行）",
+        "沒有可複製的內容（目前無譯文行）",
+        "Nothing to copy (no translated lines)",
+    ),
+    "ov.reply.ph": (
+        "输入中文回话，Enter 翻译…",
+        "輸入中文回話，Enter 翻譯…",
+        "Type a Chinese reply, Enter to translate…",
+    ),
+    "ov.reply.busy": ("翻译中…", "翻譯中…", "Translating…"),
+    "ov.reply.unavailable": ("回话功能不可用", "回話功能不可用", "Reply is unavailable"),
+    "ov.reply.no_key": (
+        "未配置 API Key，无法翻译回话（主窗口填好 Key 再试）",
+        "未設定 API Key，無法翻譯回話（主視窗填好 Key 再試）",
+        "No API key configured — set it in the main window to translate replies",
+    ),
+    "ov.reply.btn": ("翻译", "翻譯", "Translate"),
+    "ov.reply.btn.tip": (
+        "翻译输入的中文并加入下方问答记录",
+        "翻譯輸入的中文並加入下方問答記錄",
+        "Translate the Chinese input and add it to the list below",
+    ),
+    "ov.reply.clear": ("清空记录", "清空記錄", "Clear list"),
+    "ov.toast.reply_copied": (
+        "✅ 回复已生成并复制到剪贴板，回游戏 Ctrl+V 粘贴发送",
+        "✅ 回覆已生成並複製到剪貼簿，回遊戲 Ctrl+V 貼上傳送",
+        "✅ Reply generated and copied — Ctrl+V in game to send",
+    ),
+    "ov.toast.reply_fail": ("翻译失败：{msg}", "翻譯失敗：{msg}", "Translation failed: {msg}"),
+    "ov.exch.copy_reply": ("一键复制译文", "一鍵複製譯文", "Copy reply"),
+    "ov.exch.copy_reply.tip": (
+        "把生成的回复复制到剪贴板",
+        "把生成的回覆複製到剪貼簿",
+        "Copy the generated reply to the clipboard",
+    ),
+    "ov.exch.copy_orig": ("复制原文", "複製原文", "Copy original"),
+    "ov.toast.copied_reply": ("✅ 已复制译文", "✅ 已複製譯文", "✅ Reply copied"),
+    "ov.toast.copied_orig": ("✅ 已复制原文", "✅ 已複製原文", "✅ Original copied"),
+
+    # ---- 主窗口：浮窗相关勾选 ----
+    # ---- 主窗口：截图翻译结果的显示位置 ----
+    "snap.col_out": ("结果显示：", "結果顯示：", "Show results in:"),
+    "chk.snap_overlay": ("常驻悬浮窗", "常駐懸浮框", "Persistent overlay"),
+    "chk.snap_overlay.tip": (
+        "截图翻译的结果同时累积到常驻置顶的译文悬浮框（同文一行、可固定/复制全部）。\n"
+        "关掉后结果不再进浮窗；两个都关时只写主窗口结果区，可手动复制。",
+        "截圖翻譯的結果同時累積到常駐置頂的譯文懸浮框（同文一行、可固定／複製全部）。\n"
+        "關掉後結果不再進懸浮框；兩個都關時只寫主視窗結果區，可手動複製。",
+        "Also accumulate results in the always-on-top overlay (one row per unique line, pinnable, copy-all).\n"
+        "Turn it off to stop feeding the overlay; with both off, results only go to the main window for manual copying.",
+    ),
+    "chk.snap_popup": ("鼠标旁浮窗", "滑鼠旁浮窗", "Popup by cursor"),
+    "chk.snap_popup.tip": (
+        "结果在鼠标旁弹出，{sec} 秒后自动淡出（0 = 一直显示，可固定）。\n"
+        "关掉后不再弹这个快看浮窗；两个都关时只写主窗口结果区，可手动复制。",
+        "結果在滑鼠旁彈出，{sec} 秒後自動淡出（0 = 一直顯示，可固定）。\n"
+        "關掉後不再彈這個快看浮窗；兩個都關時只寫主視窗結果區，可手動複製。",
+        "Show results in a popup next to the cursor, auto-fading after {sec}s (0 = stays, pinnable).\n"
+        "Turn it off to skip the quick popup; with both off, results only go to the main window for manual copying.",
+    ),
+
+    # ---- 主窗口：浮窗相关勾选 ----
+    "chk.ov_reply": ("浮窗显示回话输入条", "懸浮框顯示回話輸入列", "Show reply bar in overlay"),
+    "chk.ov_reply.tip": (
+        "开启后可在悬浮窗里直接输入中文回话；输入需要键盘，会自动切到固定态",
+        "開啟後可在懸浮框裡直接輸入中文回話；輸入需要鍵盤，會自動切到固定態",
+        "Type Chinese replies in the overlay; it auto-pins because typing needs focus",
+    ),
+    "chk.ov_autocopy": ("回话译文自动复制", "回話譯文自動複製", "Auto-copy reply translations"),
+    "chk.ov_autocopy.tip": (
+        "在悬浮窗里翻译的回话，译文自动进剪贴板（便于回游戏 Ctrl+V）",
+        "在懸浮框裡翻譯的回話，譯文自動進剪貼簿（便於回遊戲 Ctrl+V）",
+        "Replies translated in the overlay go straight to the clipboard (ready to Ctrl+V)",
+    ),
 }
 
 

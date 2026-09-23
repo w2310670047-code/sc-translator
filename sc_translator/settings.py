@@ -1,4 +1,7 @@
-"""设置存取（JSON，位于 %APPDATA%\\SCTranslator\\settings.json）。
+"""设置存取（JSON，默认位于程序目录下的 data\\settings.json，见 paths.py）。
+
+便携：数据跟着程序目录走；只有当程序被当作已安装包运行（程序目录里找不到随包分发的
+run.bat 标记）时才退回 %APPDATA%\\SCTranslator。SC_TRANSLATOR_HOME 可强制重定向。
 
 API Key 不写入 settings.json，单独经 DPAPI 加密存放在 api_key.bin。
 """
@@ -29,12 +32,6 @@ LEGACY_PROVIDER_NAMES = {"自定义 OpenAI 兼容": "custom"}
 
 API_KEY_PLAINTEXT_FALLBACK = "_plaintext"
 
-# 旧版聊天正则（要求玩家名带括号），检测到则升级为新默认
-LEGACY_CHAT_PATTERN = r"\[[^\]\n]{0,24}\]\s*\([^()\n]{1,48}\)\s*[:：]\s*.+"
-DEFAULT_CHAT_PATTERN = (
-    r"^\s*(?:\[[^\]\n]{0,24}\]\s*)?(?:\([^()\n]{1,48}\)|[^:：()\n]{1,64})\s*[:：]\s*.+"
-)
-
 
 @dataclass
 class Settings:
@@ -45,23 +42,7 @@ class Settings:
     source_lang: str = "auto"          # 源语言提示: auto/en/ja/ko/zh
     target_lang: str = "zh-CN"         # 目标语言
     spicy_mode: bool = False           # 嘴臭模式：开启=译文用嘴臭提示词；关闭=正常提示词
-    # ---- 采样与 OCR ----
-    sample_ms: int = 220               # 变化时采样/截图间隔(ms)
-    idle_probe_s: float = 0            # (兼容遗留字段，不再使用)
-    stable_frames: int = 2             # 需连续几帧一致才提交翻译(吸收 OCR 抖动)
-    max_text_chars: int = 800          # 超过则忽略(避免误框整屏导致的超大文本)
-    ocr_interval_s: float = 1.5        # 活跃间隔(秒)：最近有文字时两次 OCR 最小间隔
-    ocr_idle_s: float = 5.0            # 空闲退避(秒)：连续无文字时两次 OCR 最小间隔
-    text_gate: bool = True             # 文本存在预判门：明显无字形的变化不跑 OCR
-    idle_sample_s: float = 1.5         # 画面静止时的巡检间隔(秒)：没变化就慢速签名比对省 CPU
-    chat_mode: bool = False            # SC聊天模式：只翻译形如 [频道](玩家):正文 的玩家消息
-    chat_pattern: str = DEFAULT_CHAT_PATTERN  # 聊天行匹配正则
-    # ---- 框选区域 (logical 为 Qt 全局坐标；physical 为 mss 物理像素) ----
-    region: Optional[dict] = None      # {logical:{x,y,w,h}, physical:{left,top,width,height}, dpr, label}
-    local_enabled: bool = False        # 本地GGUF离线翻译(实验，默认 Qwen2.5-1.5B int4)
-    local_model_path: str = ""         # GGUF 路径(留空用 data/models/ 下的默认文件名)
-    local_gpu_layers: int = -1         # -1=全部层上GPU；0=纯CPU；N=前N层上GPU（控制显存占用）
-    local_cpu_threads: int = 4         # GPU卸载时留给 CPU 的线程数（小即可，省 CPU）
+    # ---- 词典 / 术语表 ----
     dict_enabled: bool = False         # SC静态UI词典(聊天场景不需要，默认关闭)
     dict_path: str = ""                # bilingual 词典文件(每行 英文=中文)；留空关闭
     glossary_enabled: bool = True      # SC术语表：专名预替换(Stanton→斯坦顿星系等)
@@ -91,7 +72,8 @@ class Settings:
     snap_hotkey_select: str = "F10"    # 重新框选截图区域
     snap_region: Optional[dict] = None # {logical:{x,y,w,h}, physical:{left,top,width,height}, dpr, label}
     snap_popup_sec: int = 8            # 结果浮窗自动淡出秒数（0 = 一直显示）
-    snap_show_popup: bool = True       # 显示结果浮窗
+    snap_show_popup: bool = True       # 显示结果浮窗（鼠标旁）
+    snap_show_overlay: bool = True     # 结果进常驻译文悬浮框（与上一项都关=只写主窗口，手动复制）
     snap_write_main: bool = True       # 结果同时写进主窗口
     snap_max_lines: int = 40           # 单次最多翻译行数（误框整屏时防止烧 token）
     # ---- 界面 ----
@@ -119,11 +101,9 @@ class Settings:
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 merged = Settings.from_dict(data)
-                # 仅当文件里确实存了这些键才覆盖默认；旧版聊天正则自动升级为新默认
+                # 仅当文件里确实存了这些键才覆盖默认值
                 for f in fields(Settings):
                     if f.name in data and getattr(merged, f.name) is not None:
-                        if f.name == "chat_pattern" and getattr(merged, f.name) == LEGACY_CHAT_PATTERN:
-                            continue
                         setattr(self, f.name, getattr(merged, f.name))
                 # 旧版单一"双行"开关（v0.2.1）升级为"中文码 + 外文"两个勾选
                 if data.get("reply_dual_line") is True:
