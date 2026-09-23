@@ -11,7 +11,8 @@ import logging
 import os
 import subprocess
 
-from PySide6.QtGui import QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QCloseEvent, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -55,11 +57,24 @@ class MainWindow(QMainWindow):
         self.app = app
         s = app.settings
         self.setWindowTitle(t("app.title", version=__version__))
-        self.resize(980, 880)
 
+        # 整页放进滚动区：窗口可以随用户自由缩放，内容再多也不会"显示不全"。
+        # 此前布局的 minimumSizeHint 高达 1430×1239（叠加卡片与各文本框最小高度），
+        # 在 125% 缩放下会被强制撑到比屏幕还高、而且完全缩不下去——那就是"固定窗口大小 +
+        # 底部显示不全"的来源。
         central = QWidget()
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._page_scroll = QScrollArea()
+        self._page_scroll.setWidgetResizable(True)
+        self._page_scroll.setFrameShape(QFrame.NoFrame)
+        self._page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        page = QWidget()
+        self._page_scroll.setWidget(page)
+        outer.addWidget(self._page_scroll)
+        root = QVBoxLayout(page)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
@@ -475,6 +490,7 @@ class MainWindow(QMainWindow):
         self._picker = None
         self._popup = None
         self._shutting_down = False
+        self._apply_startup_geometry(s)
         self._refresh_gamecode_state()
         self._refresh_gc_mode()
         self._refresh_snap_state()
@@ -1455,9 +1471,46 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001
             subprocess.Popen(["explorer", str(logs_dir())])
 
+    def _apply_startup_geometry(self, s) -> None:
+        """恢复上次的窗口大小/位置；首次运行则用"收敛到屏幕内"的默认尺寸。
+
+        125%/150% 缩放下默认 980×880 可能高于可用高度，直接 resize 会让底部落在屏幕外；
+        恢复的历史位置也可能因为换了显示器而跑到屏幕外，所以这里都对可用区域做一次收敛。
+        """
+        scr = QGuiApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr is not None else None
+        w, h = 980, 880
+        if avail is not None and avail.width() > 0 and avail.height() > 0:
+            w = min(w, max(560, avail.width() - 40))
+            h = min(h, max(420, avail.height() - 40))
+        g = s.main_geometry or {}
+        if not g:
+            self.resize(w, h)
+            return
+        x, y = int(g.get("x", 80)), int(g.get("y", 80))
+        gw, gh = int(g.get("w", w)), int(g.get("h", h))
+        if avail is not None and avail.width() > 0 and avail.height() > 0:
+            gw = min(gw, avail.width())
+            gh = min(gh, avail.height())
+            x = max(avail.x(), min(x, avail.x() + avail.width() - 120))
+            y = max(avail.y(), min(y, avail.y() + avail.height() - 80))
+        self.setGeometry(x, y, gw, gh)
+
+    def _save_main_geometry(self) -> None:
+        """记住窗口大小/位置——"可以自由调整大小"要能跨重启保持。"""
+        try:
+            g = self.geometry()
+            self.app.settings.main_geometry = {
+                "x": g.x(), "y": g.y(), "w": g.width(), "h": g.height(),
+            }
+            self.app.settings.save()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("保存窗口尺寸失败（忽略）: %s", exc)
+
     def closeEvent(self, ev: QCloseEvent) -> None:
         # 先标记关闭中：热键录入框失焦会回调到本窗口，此时窗口可能已在销毁
         self._shutting_down = True
+        self._save_main_geometry()
         self._gc_timer_stop()
         try:
             if self._popup is not None:
