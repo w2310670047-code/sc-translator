@@ -209,3 +209,23 @@ def apply_from_settings(pin_enabled: bool, prefer_efficient: bool = True) -> str
         log.info("CPU 绑定未开启")
         return ""
     return apply_pin(prefer_efficient=prefer_efficient)
+
+
+def clear_pin() -> bool:
+    """解除绑定：把进程亲和性恢复到**系统允许的全部逻辑核**。
+
+    进程/线程掩码一旦被收紧，只有显式放宽才能恢复（关掉界面开关时必须调用）。
+    """
+    if _k32 is None:
+        return False
+    if not _prepared and not _prepare():
+        return False
+    sysm = _system_allowed_mask()
+    if not sysm:
+        log.warning("解除 CPU 绑定失败：未取得系统允许掩码")
+        return False
+    if not _k32.SetProcessAffinityMask(wintypes.HANDLE(-1), _ULONG_PTR(sysm)):
+        log.warning("SetProcessAffinityMask(解除) 失败：%s", ctypes.get_last_error())
+        return False
+    log.info("已解除 CPU 绑定：恢复为系统允许的 %d 个逻辑核", bin(sysm).count("1"))
+    return True

@@ -81,7 +81,7 @@ class Settings:
     ui_language: str = "zh_CN"         # 界面语言: zh_CN / zh_TW / en
     log_level: str = "INFO"
     overlay_geometry: Optional[dict] = None  # 悬浮框位置 {x,y,w,h}(logical)
-    pin_single_core: bool = False            # 纯文字翻译场景无需单核绑定(原屏幕OCR用)
+    pin_single_core: bool = False            # 把本进程限制到单个小核(避免与游戏抢大核；代价:截图OCR变慢)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Settings":

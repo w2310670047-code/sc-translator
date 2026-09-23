@@ -153,3 +153,99 @@ def test_real_machine_choice_is_sane():
     assert mask != 0 and desc
     assert mask & ~allowed == 0, desc     # 不得越出系统允许范围
     assert mask != allowed, desc          # 严禁占用整个 CPU
+
+
+# ------------------------------------------------------------ 应用/解除（第 11 轮接线）
+def _fake_kernel32(calls: list):
+    """替身 kernel32：只记录 SetProcessAffinityMask 入参，**绝不真的改本进程亲和性**。"""
+
+    class _Fake:
+        @staticmethod
+        def SetProcessAffinityMask(_handle, mask):
+            calls.append(int(getattr(mask, "value", mask)))
+            return 1
+
+    return _Fake()
+
+
+def test_apply_pin_sets_process_mask(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(cpu_pin, "_k32", _fake_kernel32(calls))
+    monkeypatch.setattr(cpu_pin, "_prepared", True)
+    _patch(monkeypatch, HYBRID, 0xF000 | 0x3 | 0xC)
+    desc = cpu_pin.apply_pin(prefer_efficient=True)
+    assert calls == [0x1000], calls
+    assert "小核" in desc
+
+
+def test_clear_pin_restores_full_mask(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(cpu_pin, "_k32", _fake_kernel32(calls))
+    monkeypatch.setattr(cpu_pin, "_prepared", True)
+    monkeypatch.setattr(cpu_pin, "_system_allowed_mask", lambda: 0xFFFFF)
+    assert cpu_pin.clear_pin() is True
+    assert calls == [0xFFFFF], calls
+
+
+def test_clear_pin_reports_failure_without_mask(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(cpu_pin, "_k32", _fake_kernel32(calls))
+    monkeypatch.setattr(cpu_pin, "_prepared", True)
+    monkeypatch.setattr(cpu_pin, "_system_allowed_mask", lambda: 0)
+    assert cpu_pin.clear_pin() is False
+    assert calls == []
+
+
+def _mk_ctrl(qapp, tmp_home, **kw):
+    from sc_translator.app import AppController
+    from sc_translator.settings import Settings
+
+    s = Settings().load()
+    s.theme = "dark"
+    for k, v in kw.items():
+        setattr(s, k, v)
+    s.save()
+    ctrl = AppController(qapp, settings=s)
+    ctrl.init_ui()
+    return ctrl
+
+
+def test_app_applies_pin_at_startup_when_enabled(qapp, tmp_home, monkeypatch):
+    """接线回归：`pin_single_core` 勾上时，AppController 启动即应用绑定；没勾就不动。"""
+    calls: list = []
+    monkeypatch.setattr(
+        cpu_pin, "apply_pin",
+        lambda prefer_efficient=True: calls.append(prefer_efficient) or "小核/效率核 逻辑核 [12]",
+    )
+    ctrl = _mk_ctrl(qapp, tmp_home, pin_single_core=True)
+    assert calls == [True], calls
+    assert ctrl.mainwin._cpu_pin.isChecked()
+    ctrl.shutdown()
+
+    calls.clear()
+    ctrl2 = _mk_ctrl(qapp, tmp_home, pin_single_core=False)
+    assert calls == [], "没勾选就不应绑定"
+    ctrl2.shutdown()
+
+
+def test_cpu_pin_checkbox_applies_and_releases(qapp, tmp_home, monkeypatch):
+    """界面开关立即生效：开=绑定、关=恢复全部逻辑核，并写进设置。"""
+    applied: list = []
+    cleared: list = []
+    monkeypatch.setattr(
+        cpu_pin, "apply_pin",
+        lambda prefer_efficient=True: applied.append(True) or "小核/效率核 逻辑核 [12]",
+    )
+    monkeypatch.setattr(cpu_pin, "clear_pin", lambda: cleared.append(True) or True)
+
+    ctrl = _mk_ctrl(qapp, tmp_home, pin_single_core=False)
+    win = ctrl.mainwin
+
+    win._cpu_pin.setChecked(True)
+    assert ctrl.settings.pin_single_core is True
+    assert applied == [True], applied
+
+    win._cpu_pin.setChecked(False)
+    assert ctrl.settings.pin_single_core is False
+    assert cleared == [True], cleared
+    ctrl.shutdown()

@@ -563,9 +563,30 @@ _T: dict[str, tuple[str, str, str]] = {
         "Turn it off to skip the quick popup; with both off, results only go to the main window for manual copying.",
     ),
 
+    # ---- 主窗口：CPU 亲和开关 ----
+    "chk.cpu_pin": ("限制到单个小核", "限制到單個小核", "Limit to one efficiency core"),
+    "chk.cpu_pin.tip": (
+        "把整个程序（含截图翻译的 OCR）绑定到 1 个小核/效率核上，尽量不和游戏抢大核。\n"
+        "没有小核的机器上最多占 2 个逻辑处理器、且绝不独占整机；代价：OCR 会变慢（单核）。",
+        "把整個程式（含截圖翻譯的 OCR）綁定到 1 個小核／效率核上，盡量不和遊戲搶大核。\n"
+        "沒有小核的機器上最多佔 2 個邏輯處理器、且絕不獨佔整機；代價：OCR 會變慢（單核）。",
+        "Pin the whole app (including screenshot OCR) to one efficiency core so it does not compete with the game.\n"
+        "On CPUs without E-cores it takes at most 2 logical processors and never the whole CPU. Cost: OCR gets slower (single core).",
+    ),
+    "status.cpu_pin_on": ("已绑定：{desc}", "已綁定：{desc}", "Pinned: {desc}"),
+    "status.cpu_pin_off": (
+        "已解除 CPU 绑定，恢复全部逻辑核",
+        "已解除 CPU 綁定，恢復全部邏輯核",
+        "CPU pin released — all logical cores restored",
+    ),
+    "status.cpu_pin_fail": (
+        "CPU 绑定未生效（不影响使用，详见日志）",
+        "CPU 綁定未生效（不影響使用，詳見日誌）",
+        "CPU pin did not take effect (see the log; the app still works)",
+    ),
+
     # ---- 主窗口：浮窗相关勾选 ----
-    "chk.ov_reply": ("浮窗显示回话输入条", "懸浮框顯示回話輸入列", "Show reply bar in overlay"),
-    "chk.ov_reply.tip": (
+    "chk.ov_reply": ("浮窗显示回话输入条", "懸浮框顯示回話輸入列", "Show reply bar in overlay"),    "chk.ov_reply.tip": (
         "开启后可在悬浮窗里直接输入中文回话；输入需要键盘，会自动切到固定态",
         "開啟後可在懸浮框裡直接輸入中文回話；輸入需要鍵盤，會自動切到固定態",
         "Type Chinese replies in the overlay; it auto-pins because typing needs focus",

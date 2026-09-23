@@ -369,6 +369,16 @@ class MainWindow(QMainWindow):
         orow.addStretch(1)
         snap.addLayout(orow)
 
+        # CPU 亲和（可选，默认关）：把整个程序限制到单个小核，避免和游戏抢大核
+        crow = QHBoxLayout()
+        self._cpu_pin = QCheckBox(t("chk.cpu_pin"))
+        self._cpu_pin.setChecked(bool(s.pin_single_core))
+        self._cpu_pin.setToolTip(t("chk.cpu_pin.tip"))
+        self._cpu_pin.toggled.connect(self._on_cpu_pin_toggled)
+        crow.addWidget(self._cpu_pin)
+        crow.addStretch(1)
+        snap.addLayout(crow)
+
         self._snap_state = QLabel("…")
         self._snap_state.setObjectName("hint")
         snap.addWidget(self._snap_state)
@@ -503,6 +513,20 @@ class MainWindow(QMainWindow):
         s.save()
         if not on and getattr(self, "_popup", None) is not None:
             self._popup.hide_popup()
+
+    def _on_cpu_pin_toggled(self, on: bool) -> None:
+        """CPU 亲和开关：立即生效（开=绑定到小核；关=恢复全部逻辑核）。"""
+        s = self.app.settings
+        s.pin_single_core = bool(on)
+        s.save()
+        if on:
+            desc = self.app.apply_cpu_pin()
+            self._set_status(
+                t("status.cpu_pin_on", desc=desc) if desc else t("status.cpu_pin_fail")
+            )
+        else:
+            self.app.release_cpu_pin()
+            self._set_status(t("status.cpu_pin_off"))
 
     # ---- 热键录入 ----
     def _begin_hotkey_edit(self) -> None:

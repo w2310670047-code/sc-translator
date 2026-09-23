@@ -40,6 +40,9 @@ class AppController:
         app.setApplicationDisplayName(i18n.t("app.name"))
         setup_logging(logging.DEBUG if self.settings.log_level == "DEBUG" else logging.INFO)
         log.info("%s v%s 启动", APP_DISPLAY_NAME, __version__)
+        # CPU 亲和（可选，默认关）：最早阶段绑定，之后懒加载的 OCR 等负载都受它约束
+        if self.settings.pin_single_core:
+            self.apply_cpu_pin()
 
         self._hub = _Hub()
         self._hub.result.connect(self._dispatch_result)
@@ -67,6 +70,26 @@ class AppController:
             cb(ok, value)
         except Exception:  # noqa: BLE001
             log.exception("回调执行异常")
+
+    # ------------------------------------------------------- CPU 亲和
+    def apply_cpu_pin(self) -> str:
+        """按设置把本进程绑定到小核（`pin_single_core`）。返回描述；空=未开启或失败。"""
+        if not self.settings.pin_single_core:
+            return ""
+        from . import cpu_pin
+
+        desc = cpu_pin.apply_from_settings(True)
+        if desc:
+            log.info("CPU 亲和已生效：%s", desc)
+        else:
+            log.warning("CPU 亲和未能生效（不影响运行）")
+        return desc
+
+    def release_cpu_pin(self) -> bool:
+        """解除绑定，恢复全部逻辑核（界面关掉开关时调用）。"""
+        from . import cpu_pin
+
+        return cpu_pin.clear_pin()
 
     def init_ui(self) -> None:
         from .ui.main_window import MainWindow
