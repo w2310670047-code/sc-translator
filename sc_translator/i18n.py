@@ -563,6 +563,50 @@ _T: dict[str, tuple[str, str, str]] = {
         "Turn it off to skip the quick popup; with both off, results only go to the main window for manual copying.",
     ),
 
+    # ---- 主窗口：译文浮窗设置卡 ----
+    "ovc.title": ("译文浮窗", "譯文懸浮框", "Translation overlay"),
+    "ovc.always_show": ("常驻显示", "常駐顯示", "Always visible"),
+    "ovc.always_show.tip": (
+        "勾选=浮窗常驻显示；取消=只在有新译文时出现（配合「空闲淡出」）",
+        "勾選=懸浮框常駐顯示；取消=只在新譯文時出現（配合「閒置淡出」）",
+        "On = the overlay stays visible; off = it only appears when new translations arrive (see “Fade after idle”)",
+    ),
+    "ovc.auto_hide": ("空闲淡出(秒)", "閒置淡出(秒)", "Fade after idle (s)"),
+    "ovc.auto_hide.tip": (
+        "0=不自动隐藏；>0=空闲这么多秒后淡出（仅在未勾选「常驻显示」时生效）",
+        "0=不自動隱藏；>0=閒置這麼多秒後淡出（僅在未勾選「常駐顯示」時生效）",
+        "0 = never auto-hide; >0 = fade out after that many idle seconds (only when “Always visible” is off)",
+    ),
+    "ovc.max_entries": ("保留行数", "保留行數", "Kept lines"),
+    "ovc.font_size": ("字号", "字號", "Font size"),
+    "ovc.opacity": ("不透明度%", "不透明度%", "Opacity %"),
+    "ovc.show_original": ("显示原文", "顯示原文", "Show original"),
+    "ovc.show_original.tip": (
+        "每行同时显示原文；关掉更紧凑（立即重渲染已有行）",
+        "每行同時顯示原文；關掉更緊湊（立即重繪既有行）",
+        "Show the original text under each line; off is more compact (existing rows re-render immediately)",
+    ),
+    "ovc.click_through": ("鼠标穿透", "滑鼠穿透", "Click-through"),
+    "ovc.click_through.tip": (
+        "勾选=整窗鼠标穿透不挡操作（未固定态）；取消=可交互（固定态）。浮窗里点「固定」也会改这里",
+        "勾選=整窗滑鼠穿透不擋操作（未固定態）；取消=可互動（固定態）。懸浮框裡點「固定」也會改這裡",
+        "On = the whole window is click-through (unpinned); off = interactive (pinned). The overlay's 「Pin」 button changes this too",
+    ),
+
+    # ---- 主窗口：截图翻译补充 ----
+    "snap.max_lines": ("单次最多行数", "單次最多行數", "Max lines per capture"),
+    "snap.max_lines.tip": (
+        "一次截图最多送几行去翻译（防误框整屏烧 token）；超出的行丢弃",
+        "一次截圖最多送幾行去翻譯（防誤框整屏燒 token）；超出的行丟棄",
+        "How many OCR lines are sent for translation per capture (guards against framing the whole screen and burning tokens); extra lines are dropped",
+    ),
+    "snap.write_main": ("结果写入主窗口", "結果寫入主視窗", "Also write to main window"),
+    "snap.write_main.tip": (
+        "结果同时写进主窗口结果区；两个浮窗都关掉时，这里是唯一的出口",
+        "結果同時寫進主視窗結果區；兩個懸浮框都關掉時，這裡是唯一的出口",
+        "Also write results into the main window panes; with both popups off this is the only place results appear",
+    ),
+
     # ---- 主窗口：CPU 亲和开关 ----
     "chk.cpu_pin": ("限制到单个小核", "限制到單個小核", "Limit to one efficiency core"),
     "chk.cpu_pin.tip": (

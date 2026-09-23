@@ -254,3 +254,75 @@ def test_overlay_checkbox_shows_and_hides_overlay(qapp, tmp_home):
     assert ctrl.settings.snap_show_overlay is False
     assert not ctrl.overlay.isVisible()
     ctrl.shutdown()
+
+
+# ---------------------------------------------------------------- 旋钮控件（第 12 轮）
+def test_overlay_knob_widgets_reflect_settings(qapp, tmp_home):
+    """原先"只能改 settings.json"的旋钮，现在都有控件且反映当前设置。"""
+    ctrl = _mk_ctrl(
+        qapp, tmp_home,
+        snap_max_lines=25, snap_write_main=False,
+        always_show=False, auto_hide_sec=5, max_entries=77,
+        font_size=16, opacity=60, show_original=False, click_through=False,
+    )
+    win = ctrl.mainwin
+    assert win._snap_max_lines.value() == 25
+    assert win._snap_write_main.isChecked() is False
+    assert win._ov_always.isChecked() is False
+    assert win._ov_auto_hide.value() == 5
+    assert win._ov_max_entries.value() == 77
+    assert win._ov_font.value() == 16
+    assert win._ov_opacity.value() == 60
+    assert win._ov_show_original.isChecked() is False
+    assert win._ov_click_through.isChecked() is False
+    ctrl.shutdown()
+
+
+def test_overlay_knob_edits_persist_and_apply(qapp, tmp_home):
+    """改控件立即落盘，并按需即时生效（样式重刷、穿透态同步）。"""
+    ctrl = _mk_ctrl(qapp, tmp_home)
+    win = ctrl.mainwin
+
+    win._ov_max_entries.setValue(300)
+    assert ctrl.settings.max_entries == 300
+    # 调小上限要立即裁剪已有行，而不是等下次截图
+    ctrl.mainwin._push_overlay_rows([(f"L{i}", f"译{i}") for i in range(5)])
+    assert len(ctrl.overlay._rows) == 5
+    win._ov_max_entries.setValue(2)
+    assert len(ctrl.overlay._rows) == 2, list(ctrl.overlay._rows)
+    win._ov_font.setValue(18)
+    assert ctrl.settings.font_size == 18
+    win._ov_opacity.setValue(70)
+    assert ctrl.settings.opacity == 70
+    win._ov_auto_hide.setValue(9)
+    assert ctrl.settings.auto_hide_sec == 9
+    win._snap_max_lines.setValue(80)
+    assert ctrl.settings.snap_max_lines == 80
+    win._snap_write_main.setChecked(False)
+    assert ctrl.settings.snap_write_main is False
+    win._ov_always.setChecked(False)
+    assert ctrl.settings.always_show is False
+
+    # 穿透开关：取消勾选 = 进入固定态；重新勾选 = 回到穿透态
+    win._ov_click_through.setChecked(False)
+    assert ctrl.settings.click_through is False and ctrl.overlay.pinned() is True
+    win._ov_click_through.setChecked(True)
+    assert ctrl.settings.click_through is True and ctrl.overlay.pinned() is False
+    ctrl.shutdown()
+
+
+def test_show_original_toggle_rerenders_existing_rows(qapp, tmp_home):
+    """「显示原文」关掉后应**立即重渲染已有行**，而不是等下次截图。"""
+    from PySide6.QtWidgets import QLabel
+
+    ctrl = _mk_ctrl(qapp, tmp_home, show_original=True)
+    win = ctrl.mainwin
+    win._push_overlay_rows([("Hello there", "你好")])
+    row = ctrl.overlay._rows["Hello there"]
+    lbl = row.findChild(QLabel)
+    assert "Hello there" in lbl.text()
+
+    win._ov_show_original.setChecked(False)
+    assert "Hello there" not in lbl.text(), lbl.text()
+    assert ctrl.settings.show_original is False
+    ctrl.shutdown()

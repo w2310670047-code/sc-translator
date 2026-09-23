@@ -160,6 +160,7 @@ class OverlayWindow(QWidget):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self._user_hidden = False
         self._rows: dict[str, QWidget] = {}
+        self._row_data: dict[str, dict] = {}                 # 行数据（供「显示原文」等即时重渲染）
         self._exchanges: list[tuple[str, str, str]] = []   # (原文, 译文, 目标语言)
         self._pending_show = False
 
@@ -438,6 +439,7 @@ class OverlayWindow(QWidget):
             w.setParent(None)
             w.deleteLater()
         self._rows.clear()
+        self._row_data.clear()
         self._update_count()
         self.cleared.emit()
 
@@ -483,6 +485,7 @@ class OverlayWindow(QWidget):
                 row = self._make_row()
                 self._rows_lay.insertWidget(self._rows_lay.count() - 1, row)  # 末尾 stretch 之前
                 self._rows[key] = row
+            self._row_data[key] = d
             self._update_row(row, d, s)
         self._evict_over_max()
         self._update_count()
@@ -499,8 +502,26 @@ class OverlayWindow(QWidget):
         while len(self._rows) > limit:
             key = next(iter(self._rows))
             row = self._rows.pop(key)
+            self._row_data.pop(key, None)
             row.setParent(None)
             row.deleteLater()
+
+    def rerender_rows(self) -> None:
+        """按当前设置重渲染已有行（「显示原文」等开关要立即生效，而不是等到下次截图）。"""
+        s = self.ctx.settings
+        for key, row in self._rows.items():
+            d = self._row_data.get(key)
+            if d:
+                self._update_row(row, d, s)
+
+    def refresh_idle_policy(self) -> None:
+        """按当前设置重新评估空闲淡出（「常驻显示」「空闲淡出秒数」改动后调用）。"""
+        self._bump_idle()
+
+    def trim_to_limit(self) -> None:
+        """立即按 max_entries 裁剪多余行（把上限调小时要马上生效，而不是等下次截图）。"""
+        self._evict_over_max()
+        self._update_count()
 
     def _make_row(self) -> QFrame:
         row = QFrame()

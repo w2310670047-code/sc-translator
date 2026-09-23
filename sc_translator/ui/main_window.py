@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -347,27 +348,22 @@ class MainWindow(QMainWindow):
         self._snap_popup.setToolTip(t("chk.snap_popup.tip", sec=int(s.snap_popup_sec or 0)))
         self._snap_popup.toggled.connect(self._on_snap_popup_toggled)
         drow.addWidget(self._snap_popup)
+        # 单次送入翻译的行数上限（防"误框整屏"烧 token）
+        drow.addWidget(QLabel(t("snap.max_lines")))
+        self._snap_max_lines = QSpinBox()
+        self._snap_max_lines.setRange(1, 500)
+        self._snap_max_lines.setValue(int(s.snap_max_lines or 40))
+        self._snap_max_lines.setToolTip(t("snap.max_lines.tip"))
+        self._snap_max_lines.valueChanged.connect(lambda v: self._save_num("snap_max_lines", v))
+        drow.addWidget(self._snap_max_lines)
+        # 结果是否同时写进主窗口结果区（两个浮窗都关掉时，它是唯一出口）
+        self._snap_write_main = QCheckBox(t("snap.write_main"))
+        self._snap_write_main.setChecked(bool(s.snap_write_main))
+        self._snap_write_main.setToolTip(t("snap.write_main.tip"))
+        self._snap_write_main.toggled.connect(lambda v: self._save_flag("snap_write_main", v))
+        drow.addWidget(self._snap_write_main)
         drow.addStretch(1)
         snap.addLayout(drow)
-
-        # 浮窗相关：回话输入条 / 自动复制 / 手动叫回浮窗（在浮窗里点过 ✕ 之后用）
-        orow = QHBoxLayout()
-        self._ov_reply = QCheckBox(t("chk.ov_reply"))
-        self._ov_reply.setChecked(bool(s.reply_enabled))
-        self._ov_reply.setToolTip(t("chk.ov_reply.tip"))
-        self._ov_reply.toggled.connect(self._on_ov_reply_toggled)
-        orow.addWidget(self._ov_reply)
-        self._ov_autocopy = QCheckBox(t("chk.ov_autocopy"))
-        self._ov_autocopy.setChecked(bool(s.auto_copy_reply))
-        self._ov_autocopy.setToolTip(t("chk.ov_autocopy.tip"))
-        self._ov_autocopy.toggled.connect(self._on_ov_autocopy_toggled)
-        orow.addWidget(self._ov_autocopy)
-        self._btn_ov_show = QPushButton(t("ov.show"))
-        self._btn_ov_show.setToolTip(t("ov.show.tip"))
-        self._btn_ov_show.clicked.connect(self._show_overlay)
-        orow.addWidget(self._btn_ov_show)
-        orow.addStretch(1)
-        snap.addLayout(orow)
 
         # CPU 亲和（可选，默认关）：把整个程序限制到单个小核，避免和游戏抢大核
         crow = QHBoxLayout()
@@ -396,6 +392,77 @@ class MainWindow(QMainWindow):
         sbody.addWidget(self._snap_dst, 1)
         snap.addLayout(sbody)
         root.addWidget(snap_card)
+
+        # ---------------- 译文浮窗（常驻置顶）----------------
+        # 从前只能改 settings.json 的旋钮，这里全部做成控件（改动即时生效并落盘）
+        ov_card, ovc = make_card(t("ovc.title"))
+        vrow1 = QHBoxLayout()
+        self._ov_always = QCheckBox(t("ovc.always_show"))
+        self._ov_always.setChecked(bool(s.always_show))
+        self._ov_always.setToolTip(t("ovc.always_show.tip"))
+        self._ov_always.toggled.connect(lambda v: self._on_ov_flag("always_show", v))
+        vrow1.addWidget(self._ov_always)
+        vrow1.addWidget(QLabel(t("ovc.auto_hide")))
+        self._ov_auto_hide = QSpinBox()
+        self._ov_auto_hide.setRange(0, 3600)
+        self._ov_auto_hide.setValue(int(s.auto_hide_sec or 0))
+        self._ov_auto_hide.setToolTip(t("ovc.auto_hide.tip"))
+        self._ov_auto_hide.valueChanged.connect(lambda v: self._save_num("auto_hide_sec", v, idle=True))
+        vrow1.addWidget(self._ov_auto_hide)
+        vrow1.addWidget(QLabel(t("ovc.max_entries")))
+        self._ov_max_entries = QSpinBox()
+        self._ov_max_entries.setRange(0, 5000)
+        self._ov_max_entries.setValue(int(s.max_entries or 0))
+        self._ov_max_entries.valueChanged.connect(lambda v: self._save_num("max_entries", v, prune=True))
+        vrow1.addWidget(self._ov_max_entries)
+        vrow1.addStretch(1)
+        ovc.addLayout(vrow1)
+
+        vrow2 = QHBoxLayout()
+        vrow2.addWidget(QLabel(t("ovc.font_size")))
+        self._ov_font = QSpinBox()
+        self._ov_font.setRange(9, 32)
+        self._ov_font.setValue(int(s.font_size or 14))
+        self._ov_font.valueChanged.connect(lambda v: self._save_num("font_size", v, restyle=True))
+        vrow2.addWidget(self._ov_font)
+        vrow2.addWidget(QLabel(t("ovc.opacity")))
+        self._ov_opacity = QSpinBox()
+        self._ov_opacity.setRange(20, 100)
+        self._ov_opacity.setValue(int(s.opacity or 92))
+        self._ov_opacity.valueChanged.connect(lambda v: self._save_num("opacity", v, restyle=True))
+        vrow2.addWidget(self._ov_opacity)
+        self._ov_show_original = QCheckBox(t("ovc.show_original"))
+        self._ov_show_original.setChecked(bool(s.show_original))
+        self._ov_show_original.setToolTip(t("ovc.show_original.tip"))
+        self._ov_show_original.toggled.connect(lambda v: self._on_ov_flag("show_original", v))
+        vrow2.addWidget(self._ov_show_original)
+        self._ov_click_through = QCheckBox(t("ovc.click_through"))
+        self._ov_click_through.setChecked(bool(s.click_through))
+        self._ov_click_through.setToolTip(t("ovc.click_through.tip"))
+        self._ov_click_through.toggled.connect(lambda v: self._on_ov_flag("click_through", v))
+        vrow2.addWidget(self._ov_click_through)
+        vrow2.addStretch(1)
+        ovc.addLayout(vrow2)
+
+        # 回话输入条 / 自动复制 / 手动叫回浮窗（在浮窗里点过 ✕ 之后用）
+        orow = QHBoxLayout()
+        self._ov_reply = QCheckBox(t("chk.ov_reply"))
+        self._ov_reply.setChecked(bool(s.reply_enabled))
+        self._ov_reply.setToolTip(t("chk.ov_reply.tip"))
+        self._ov_reply.toggled.connect(self._on_ov_reply_toggled)
+        orow.addWidget(self._ov_reply)
+        self._ov_autocopy = QCheckBox(t("chk.ov_autocopy"))
+        self._ov_autocopy.setChecked(bool(s.auto_copy_reply))
+        self._ov_autocopy.setToolTip(t("chk.ov_autocopy.tip"))
+        self._ov_autocopy.toggled.connect(self._on_ov_autocopy_toggled)
+        orow.addWidget(self._ov_autocopy)
+        self._btn_ov_show = QPushButton(t("ov.show"))
+        self._btn_ov_show.setToolTip(t("ov.show.tip"))
+        self._btn_ov_show.clicked.connect(self._show_overlay)
+        orow.addWidget(self._btn_ov_show)
+        orow.addStretch(1)
+        ovc.addLayout(orow)
+        root.addWidget(ov_card)
 
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._translate_to_zh)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self._translate_to_zh)
@@ -492,6 +559,44 @@ class MainWindow(QMainWindow):
         s = self.app.settings
         s.auto_copy_reply = bool(on)
         s.save()
+
+    # ---- 浮窗/截图旋钮（统一落盘，按需即时生效）----
+    def _save_num(self, name: str, value: int, restyle: bool = False, idle: bool = False,
+                  prune: bool = False) -> None:
+        """数值旋钮：落盘；restyle=重刷样式；idle=重估空闲淡出；prune=立即按新上限裁剪行。"""
+        s = self.app.settings
+        setattr(s, name, int(value))
+        s.save()
+        ov = getattr(self.app, "overlay", None)
+        if ov is None:
+            return
+        if restyle:
+            ov.apply_theme()
+        if idle:
+            ov.refresh_idle_policy()
+        if prune:
+            ov.trim_to_limit()
+
+    def _save_flag(self, name: str, on: bool) -> None:
+        """布尔旋钮：只落盘（不需要即时重刷的用它）。"""
+        s = self.app.settings
+        setattr(s, name, bool(on))
+        s.save()
+
+    def _on_ov_flag(self, name: str, on: bool) -> None:
+        """浮窗布尔旋钮：落盘 + 立即生效。"""
+        self._save_flag(name, on)
+        ov = getattr(self.app, "overlay", None)
+        if ov is None:
+            return
+        if name == "click_through":
+            ov.apply_click_through()
+        elif name == "show_original":
+            ov.rerender_rows()
+        elif name == "always_show":
+            if on:
+                ov.show_overlay()
+            ov.refresh_idle_policy()
 
     def _on_snap_overlay_toggled(self, on: bool) -> None:
         """常驻悬浮窗开关：落盘；关掉时立即收起，打开时立即露出（否则看不出开了什么）。"""
@@ -1316,12 +1421,28 @@ class MainWindow(QMainWindow):
             (getattr(self, "_ov_autocopy", None), bool(s.auto_copy_reply)),
             (getattr(self, "_snap_overlay", None), bool(s.snap_show_overlay)),
             (getattr(self, "_snap_popup", None), bool(s.snap_show_popup)),
+            (getattr(self, "_ov_always", None), bool(s.always_show)),
+            (getattr(self, "_ov_show_original", None), bool(s.show_original)),
+            (getattr(self, "_ov_click_through", None), bool(s.click_through)),
+            (getattr(self, "_snap_write_main", None), bool(s.snap_write_main)),
         ):
             if box is None:
                 continue
             blk = box.blockSignals(True)
             box.setChecked(value)
             box.blockSignals(blk)
+        for spin, value in (
+            (getattr(self, "_ov_auto_hide", None), int(s.auto_hide_sec or 0)),
+            (getattr(self, "_ov_max_entries", None), int(s.max_entries or 0)),
+            (getattr(self, "_ov_font", None), int(s.font_size or 14)),
+            (getattr(self, "_ov_opacity", None), int(s.opacity or 92)),
+            (getattr(self, "_snap_max_lines", None), int(s.snap_max_lines or 40)),
+        ):
+            if spin is None or spin.value() == value:
+                continue
+            blk = spin.blockSignals(True)
+            spin.setValue(value)
+            spin.blockSignals(blk)
         ov = getattr(self.app, "overlay", None)
         if ov is not None:
             ov.apply_theme()
