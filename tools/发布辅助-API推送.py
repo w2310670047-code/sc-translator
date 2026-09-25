@@ -19,7 +19,7 @@ import subprocess
 import sys
 import urllib.request
 
-REPO = "w2310670047-code/sc-translator"
+REPO = "wangcangxing/sc-translator"
 API = "https://api.github.com"
 TOKEN = os.environ["GH_TOKEN"]
 

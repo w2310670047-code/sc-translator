@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
-set REPO=https://github.com/w2310670047-code/sc-translator.git
+set REPO=https://github.com/wangcangxing/sc-translator.git
 set "PY=.venv\Scripts\python.exe"
 
 rem 版本号一律从 sc_translator\__init__.py 现读，避免像 v0.1.0 那样写死后忘记改
@@ -26,7 +26,7 @@ set "TAG=v%VER%"
 set "NOTES=docs\RELEASE-v%VER%.md"
 
 echo ============================================
-echo  发布到 GitHub：w2310670047-code/sc-translator  版本 v%VER%
+echo  发布到 GitHub：wangcangxing/sc-translator  版本 v%VER%
 echo ============================================
 echo.
 
@@ -53,7 +53,7 @@ powershell -NoProfile -Command "if (Test-Path '%NOTES%') { Get-Content -Raw '%NO
 if not exist "%ZIP%" (
   echo [提示] 未找到 %ZIP%，先双击 build.bat 打包，或手动上传已有文件。
 )
-start "" "https://github.com/w2310670047-code/sc-translator/releases/new?tag=%TAG%"
+start "" "https://github.com/wangcangxing/sc-translator/releases/new?tag=%TAG%"
 
 echo.
 echo 完成！接下来在浏览器里：

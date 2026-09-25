@@ -19,7 +19,7 @@
 
 ## 下载即用（打包版）
 
-在 [Releases](https://github.com/w2310670047-code/sc-translator/releases) 下载 `SCTranslator-v*-win64.zip`，解压到任意目录后双击 `SCTranslator.exe`。免安装、免 Python 环境。
+在 [Releases](https://github.com/wangcangxing/sc-translator/releases) 下载 `SCTranslator-v*-win64.zip`，解压到任意目录后双击 `SCTranslator.exe`。免安装、免 Python 环境。
 
 ```text
 SCTranslator\

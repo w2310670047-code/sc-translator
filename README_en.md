@@ -21,7 +21,7 @@ Translation runs against any **OpenAI-compatible API** (DeepSeek by default). Pr
 
 ## Download & run (packaged build)
 
-Get `SCTranslator-v*-win64.zip` from [Releases](https://github.com/w2310670047-code/sc-translator/releases), extract anywhere, double-click `SCTranslator.exe`. No installer, no Python required.
+Get `SCTranslator-v*-win64.zip` from [Releases](https://github.com/wangcangxing/sc-translator/releases), extract anywhere, double-click `SCTranslator.exe`. No installer, no Python required.
 
 ```text
 SCTranslator\
