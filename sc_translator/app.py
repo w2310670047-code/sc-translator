@@ -91,6 +91,32 @@ class AppController:
 
         return cpu_pin.clear_pin()
 
+    def apply_ocr_mode(self) -> tuple[bool, str]:
+        """按设置重建 OCR 引擎（CPU ⇄ GPU）。返回 ``(是否按所选模式生效, 界面说明)``。
+
+        GPU 模式需要本机装有 ``onnxruntime-directml``；没有就把设置退回 CPU 并返回
+        False + 可读原因——**不静默假装已经用上 GPU**。
+        引擎按 provider 建会话，切换必须丢弃旧引擎（GPU 会话的显存也在此归还）。
+        """
+        from . import i18n
+        from .ocr import gpu_provider_available
+
+        want_gpu = bool(self.settings.ocr_use_gpu)
+        if want_gpu and not gpu_provider_available():
+            self.settings.ocr_use_gpu = False
+            try:
+                self.settings.save()
+            except Exception:  # noqa: BLE001
+                pass
+            return False, i18n.t("status.ocr_gpu_missing")
+        if self._snap is not None:
+            try:
+                self._snap.close()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("重建 OCR 前清理旧服务失败（忽略）: %s", exc)
+            self._snap = None
+        return True, i18n.t("status.ocr_gpu_on" if want_gpu else "status.ocr_gpu_off")
+
     def init_ui(self) -> None:
         from .ui.main_window import MainWindow
 
@@ -167,6 +193,14 @@ class AppController:
         t = threading.Thread(target=runner, daemon=True)
         self._threads.append(t)
         t.start()
+
+    def post_to_main(self, fn: Callable[[], None]) -> None:
+        """从后台线程把一个无参调用排队回主线程（复用 ``_Hub`` 的队列信号）。
+
+        用途：分阶段结果——OCR 一完成就先把原文显示出来，译文回来再原地替换，
+        这样"按了热键半天没反应"就变成了"立刻有反馈"。
+        """
+        self._hub.result.emit((lambda _ok, _val: fn(), True, None))
 
     def translate_reply_async(self, text: str, target: str, done: Callable[[bool, object], None]) -> None:
         """浮窗回话：后台翻译一条中文，完成后在主线程回调 ``done(ok, result)``。
@@ -344,10 +378,14 @@ class AppController:
 
     # ------------------------------------------------------- 关闭
     def shutdown(self) -> None:
-        try:
-            self.cache.flush()
-        except Exception as exc:  # noqa: BLE001
-            log.warning("退出清理异常: %s", exc)
+        # 只清理已经建过的对象：退出路径不为了"关一下"再新建缓存/读盘
+        if self._cache is not None:
+            try:
+                # 带超时：万一有线程卡在持锁位置，也不能让主线程冻住
+                # （否则关窗时 Windows 会显示"Python 未响应"）
+                self._cache.flush(timeout=2.0)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("退出清理异常: %s", exc)
         self.remove_hotkeys()
         if self._snap is not None:
             try:

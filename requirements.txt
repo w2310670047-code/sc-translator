@@ -7,3 +7,14 @@ requests>=2.31
 Pillow>=10.0
 wordninja>=2.0
 dxcam>=0.0.5
+
+# GPU 加速（主窗口「GPU 加速（DirectML）」开关）需要 onnxruntime-directml。
+# 它**不能**直接写进上面的依赖列表：rapidocr-onnxruntime 硬依赖 CPU 版 onnxruntime，
+# 两者共用同一个 onnxruntime 包目录，谁最后落盘谁生效
+# （实测：一条命令同时装两个，import 到的仍是 CPU 版、没有 DmlExecutionProvider）。
+# 所以装完依赖后请**单独再装一次**，确保 directml 的文件最后写入：
+#     pip install -r requirements.txt
+#     pip install --force-reinstall --no-deps onnxruntime-directml
+# 验证成功：python -c 打印 onnxruntime 的 providers，列出 DmlExecutionProvider 即可
+# （此时 CPU 模式仍然可用，界面里能随时切换）。不想用 GPU 就跳过第二步：
+# 界面上的开关会自己退回 CPU 并说明原因。

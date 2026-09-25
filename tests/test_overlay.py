@@ -326,3 +326,128 @@ def test_show_original_toggle_rerenders_existing_rows(qapp, tmp_home):
     assert "Hello there" not in lbl.text(), lbl.text()
     assert ctrl.settings.show_original is False
     ctrl.shutdown()
+
+
+# ---------------------------------------------------------------- 逐区域穿透（第 17 轮）
+def test_passthrough_keeps_rows_and_reply_interactive(qapp, tmp_home):
+    """穿透态下：译文滚动区与回话输入条仍归浮窗处理，其余区域才穿透。
+
+    真实故障：旧实现用整窗 WS_EX_TRANSPARENT / WA_TransparentForMouseEvents，
+    于是"打开鼠标穿透时回话功能失效、无法滚动"。
+    """
+    from PySide6.QtCore import QPoint, Qt
+
+    ctrl = _mk_ctrl(qapp, tmp_home, reply_enabled=True, click_through=True)
+    ov = ctrl.overlay
+    ov.show_overlay()
+    ov.push_lines([{"key": f"L{i}", "text": f"L{i}", "translated": f"译{i}", "pending": False}
+                   for i in range(8)])
+    qapp.processEvents()
+
+    assert ov.pinned() is False, "click_through=True 应为穿透态"
+    # 整窗级"鼠标透明"必须关掉，否则子控件收不到事件（这正是两个 bug 的根因）
+    assert ov.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents) is False
+
+    inside = lambda w: ov.is_interactive_point(w.mapTo(ov, QPoint(w.width() // 2, w.height() // 2)))
+    assert inside(ov._scroll), "译文滚动区在穿透态下必须仍可滚"
+    assert inside(ov._reply_panel), "回话条在穿透态下必须仍可用"
+    assert not ov.is_interactive_point(QPoint(3, ov.height() // 2)), "边距空白应穿透给下面的窗口"
+
+    # 固定态：整窗可交互（边距也算）
+    ov.set_pinned(True)
+    assert ov.is_interactive_point(QPoint(3, ov.height() // 2))
+    ctrl.shutdown()
+
+
+def test_passthrough_state_survives_reply_sync(qapp, tmp_home):
+    """穿透状态不能被回话条的同步路径改回去（曾表现为"穿透开关点了等于没点"）。"""
+    ctrl = _mk_ctrl(qapp, tmp_home, reply_enabled=True)
+    win, ov = ctrl.mainwin, ctrl.overlay
+
+    win._ov_click_through.setChecked(True)        # 用户勾上「鼠标穿透」
+    assert ctrl.settings.click_through is True
+    assert ov.pinned() is False
+
+    win.refresh_overlay_controls()                # 任何同步路径都不得重新固定
+    assert ov.pinned() is False, "同步回话条时不应把穿透改回固定"
+    assert ctrl.settings.click_through is True
+
+    ov.set_reply_enabled(True)                     # 显式同步同样不得改状态
+    assert ov.pinned() is False
+    ctrl.shutdown()
+
+
+def test_overlay_click_through_button_toggles_and_syncs(qapp, tmp_home):
+    """浮窗标题栏上的「穿透」按钮：能来回切，并与主窗口勾选双向同步。"""
+    ctrl = _mk_ctrl(qapp, tmp_home, reply_enabled=True, click_through=True)
+    win, ov = ctrl.mainwin, ctrl.overlay
+    ov.show_overlay()
+    qapp.processEvents()
+
+    assert ov.pinned() is False
+    ov._ct_btn.click()                            # 穿透 -> 固定
+    assert ov.pinned() is True
+    assert ctrl.settings.click_through is False
+    assert win._ov_click_through.isChecked() is False, "主窗口勾选应同步"
+    assert "穿" in ov._ct_btn.text() or "Through" in ov._ct_btn.text(), ov._ct_btn.text()
+
+    ov._ct_btn.click()                            # 固定 -> 穿透
+    assert ov.pinned() is False
+    assert ctrl.settings.click_through is True
+    assert win._ov_click_through.isChecked() is True
+    ctrl.shutdown()
+
+
+def test_pending_rows_show_source_text_even_without_show_original(qapp, tmp_home):
+    """分阶段反馈：「识别中…」行必须总带原文，译文回来后按同一个 key 原地替换。"""
+    from PySide6.QtWidgets import QLabel
+
+    ctrl = _mk_ctrl(qapp, tmp_home, show_original=False)
+    win, ov = ctrl.mainwin, ctrl.overlay
+    ov.show_overlay()
+
+    win._show_snap_partial(["Quantum travel to Crusader"])
+    row = ov._rows["Quantum travel to Crusader"]
+    lbl = row.findChild(QLabel)
+    assert "Quantum travel to Crusader" in lbl.text(), lbl.text()
+    assert ov._row_data["Quantum travel to Crusader"]["pending"] is True
+    assert "1" in win._status.text(), win._status.text()      # 状态栏「已识别 1 行，正在翻译…」
+
+    win._push_overlay_rows([("Quantum travel to Crusader", "量子航行至十字军")])
+    assert "量子航行至十字军" in row.findChild(QLabel).text(), row.findChild(QLabel).text()
+    assert ov._row_data["Quantum travel to Crusader"]["pending"] is False
+    assert len(ov._rows) == 1, "同一行不得重复占位"
+    ctrl.shutdown()
+
+
+def test_push_lines_scrolls_to_bottom(qapp, tmp_home):
+    """每次新结果都要贴到列表最底部（旧实现「永远差一屏」）。
+
+    旧写法是插完行再用 QTimer.singleShot(0) 取 sb.maximum()，那一刻新行还没布局完，
+    拿到的是**旧**范围：实测推 30 行后 value=0、再推 30 行才跳到上一批的底部。
+    """
+    ctrl = _mk_ctrl(qapp, tmp_home)
+    ov = ctrl.overlay
+    ov.show_overlay()
+    qapp.processEvents()
+    sb = ov._scroll.verticalScrollBar()
+
+    def push(n: int, prefix: str) -> None:
+        ov.push_lines([{"key": f"{prefix}{i}", "text": f"{prefix}{i}", "translated": f"译{i}",
+                        "pending": False} for i in range(n)])
+        for _ in range(6):
+            qapp.processEvents()
+            time.sleep(0.01)
+
+    push(30, "A")
+    assert sb.maximum() > 0, "行足够多时应该有可滚动范围"
+    assert sb.value() == sb.maximum(), (sb.value(), sb.maximum())
+    push(30, "B")
+    assert sb.value() == sb.maximum(), f"第二批结果不得差一屏：{sb.value()}/{sb.maximum()}"
+
+    # 用户往回滚之后，新结果仍要把视图带回最底部（按需翻译：按一次热键就是看最新）
+    sb.setValue(max(0, sb.maximum() // 2))
+    qapp.processEvents()
+    push(1, "C")
+    assert sb.value() == sb.maximum(), f"新结果应回到最底部：{sb.value()}/{sb.maximum()}"
+    ctrl.shutdown()

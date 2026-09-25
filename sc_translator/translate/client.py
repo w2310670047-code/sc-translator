@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 import logging
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -43,11 +45,73 @@ _NUMBERED_TMPL = (
     "必须按顺序每行只输出一个译文，行首带原编号如 “3. 译文”，不要输出编号之外的任何文字或解释。"
 )
 
+#: 方案 C：让多模态模型直接读图（识别 + 翻译一次完成）。输出契约刻意写死，
+#: 因为下游要把「原文/译文」分别放进浮窗（同 key 原地更新、可显示原文）。
+#: 格式取自官方文档 https://api-docs.deepseek.com/zh-cn/guides/vision
+_VISION_SYSTEM_TMPL = """你是游戏截图翻译引擎：先识别图片中的文字，再逐行翻译成{target}。
+
+输出规则（严格遵守，覆盖其它习惯）：
+1) 每行一条，格式为 `序号. 原文 => 译文`（`=>` 两侧各一个空格）；
+2) 序号从 1 开始，按图中从上到下的顺序，不合并、不拆分行；
+3) 只输出这些行：不要解释、不要标题、不要代码块围栏、不要额外说明；
+4) 玩家名/地名/专有名词保留原文或用通用译名；聊天语气要口语化；
+5) 原本已经是{target}的行，译文位置照原样重复一遍。"""
+
+
+def parse_vision_pairs(raw: str, max_lines: int = 40) -> list[tuple[str, str]]:
+    """解析模型输出的 ``序号. 原文 => 译文`` → ``[(原文, 译文)]``。
+
+    容错：兼容 ``=>`` / ``→`` / ``⇒``；缺分隔符时把整行当译文（原文留空）——
+    宁可退化显示，也不因为格式抖动丢掉整批内容。
+    """
+    out: list[tuple[str, str]] = []
+    for ln in (raw or "").splitlines():
+        s = ln.strip().strip("`")
+        if not s or s.startswith("```"):
+            continue
+        s = re.sub(r"^\s*\d+\s*[.、:：)]\s*", "", s)      # 序号可有可无
+        for sep in ("=>", "→", "⇒", "＝＞"):
+            if sep in s:
+                src, _, dst = s.partition(sep)
+                out.append((src.strip().strip('"“”\'`'), dst.strip().strip('"“”\'`')))
+                break
+        else:
+            out.append(("", s))
+        if len(out) >= max_lines:
+            break
+    # 只要有一行带原文，就把"没分隔符的行"当成模型的说明文字丢掉；
+    # 若一行都没有分隔符（模型只给了译文），则保留它们——宁可退化也不丢内容。
+    with_src = [p for p in out if p[0]]
+    return with_src if with_src else out
+
 
 class ApiError(RuntimeError):
     def __init__(self, message: str, status: Optional[int] = None):
         super().__init__(message)
         self.status = status
+
+
+# ---------------------------------------------------------------- 进程级复用
+# 截图翻译每按一次热键都会新建一个客户端；如果每轮都重新探测 /models 定前缀、
+# 重新建 TLS 连接，实测每次要多花 1~4.5 秒（日志里 4395ms / 1960ms 各一次）。
+# 前缀按 base 缓存在进程级、连接用共享 Session 保持长连接，这两笔开销就没了。
+_PREFIX_CACHE: dict[str, str] = {}
+_PREFIX_LOCK = threading.Lock()
+_SESSION: Optional[requests.Session] = None
+_SESSION_LOCK = threading.Lock()
+
+
+def shared_session() -> requests.Session:
+    """进程级共享 Session：保持 TCP/TLS 长连接，省掉每次热键的握手。
+
+    说明：会话可能被截图翻译线程与回话线程共用。这里不用 cookie，连接池
+    本身是线程安全的，与"客户端长期存活"的既有行为一致。
+    """
+    global _SESSION
+    with _SESSION_LOCK:
+        if _SESSION is None:
+            _SESSION = requests.Session()
+        return _SESSION
 
 
 @dataclass
@@ -65,11 +129,12 @@ class ClientOptions:
 
 
 class OpenAiCompatClient:
-    def __init__(self, opts: Optional[ClientOptions] = None, cache: Optional[TranslationCache] = None) -> None:
+    def __init__(self, opts: Optional[ClientOptions] = None, cache: Optional[TranslationCache] = None,
+                 session: Optional[requests.Session] = None) -> None:
         self.opts = opts or ClientOptions()
         self._no_thinking = False      # 网关拒绝 thinking 参数后置位，之后不再发送
         self.cache = cache
-        self._session = requests.Session()
+        self._session = session or shared_session()
         self._prefix_lock = threading.Lock()
         self._prefix: Optional[str] = None  # 实际可用前缀，如 .../v1
         self._log = logging.getLogger(__name__ + ".OpenAiCompatClient")
@@ -98,11 +163,22 @@ class OpenAiCompatClient:
         return b
 
     def resolve_prefix(self) -> str:
-        """找到可用的 API 前缀：优先 {base}，失败且不含 /v1 时尝试 {base}/v1。"""
+        """找到可用的 API 前缀：优先 {base}，失败且不含 /v1 时尝试 {base}/v1。
+
+        结果按 base 缓存在**进程级**（不是每个客户端各自缓存）：按需截图翻译
+        每次热键都会新建客户端，若每轮都探测一次 /models，实测每次白等 1~4.5 秒。
+        换服务商=换 base 字符串，会自然重新探测。
+        """
         with self._prefix_lock:
             if self._prefix is not None:
                 return self._prefix
         base = self.base_url()
+        with _PREFIX_LOCK:
+            cached = _PREFIX_CACHE.get(base)
+        if cached:
+            with self._prefix_lock:
+                self._prefix = cached
+            return cached
         candidates = [base]
         if not base.endswith("/v1"):
             candidates.append(base + "/v1")
@@ -113,6 +189,8 @@ class OpenAiCompatClient:
                 if resp.status_code < 400:
                     with self._prefix_lock:
                         self._prefix = c
+                    with _PREFIX_LOCK:
+                        _PREFIX_CACHE[base] = c
                     self._log.info("API 前缀确定为: %s", c)
                     return c
                 last_err = ApiError(f"GET {c}/models -> HTTP {resp.status_code}", resp.status_code)
@@ -405,6 +483,47 @@ class OpenAiCompatClient:
                 self.cache.put(cache_model, source_lang, texts[i], out)
             exchange_log.record("realtime", model, texts[i], out=out, style=style)
         return results
+
+    def translate_image(self, image: bytes, target_lang: str = "zh-CN", *, max_lines: int = 40,
+                        detail: str = "low", mime: str = "image/png") -> list[tuple[str, str]]:
+        """方案 C：一次请求完成「读图 + 翻译」，返回 ``[(原文, 译文)]``（不经过本地 OCR）。
+
+        官方格式（docs /guides/vision）：``content`` 是块数组，图片走
+        ``{"type":"image_url","image_url":{"url":"data:image/png;base64,...","detail":"low"}}``。
+        ``detail="low"`` 会把图缩到 512×512——我们的框选通常比这更小，等于零损失而更省 token；
+        官方写明**每张图 token 上限 1024**，内联图计入 48 MiB 请求体限制。
+        """
+        if not image:
+            return []
+        target = "简体中文" if target_lang.lower().startswith("zh") else target_lang
+        b64 = base64.b64encode(image).decode("ascii")
+        system = _VISION_SYSTEM_TMPL.replace("{target}", target)
+        if self.opts.spicy:
+            system += "\n" + prompt_files.fill(prompt_files.spicy_prompt())
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": "识别并翻译这张截图里的所有文字。"},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{b64}", "detail": detail}},
+            ]},
+        ]
+        model = self.opts.model or DEFAULT_MODEL
+        style = "spicy" if self.opts.spicy else "normal"
+        max_tokens = min(4096, 256 + max(1, max_lines) * 60)
+        try:
+            raw = self._chat(messages, temperature=0.2, max_tokens=max_tokens)
+        except ApiError as exc:
+            exchange_log.record("vision", model, f"<image {len(image)}B>", error=str(exc), style=style)
+            raise
+        pairs = parse_vision_pairs(raw, max_lines=max_lines)
+        exchange_log.record("vision", model, f"<image {len(image)}B>", out=raw, style=style)
+        if not pairs:
+            raise ApiError(
+                "模型没有按 `序号. 原文 => 译文` 的格式返回可解析内容"
+                "（原始输出已记入 data\\logs\\exchange.log；可先关掉「模型直接读图」用本地 OCR）"
+            )
+        return pairs
 
     def translate_reply(self, text: str, target_lang: str = "English", spicy: bool = False) -> str:
         text = (text or "").strip()

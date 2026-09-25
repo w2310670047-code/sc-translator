@@ -449,6 +449,99 @@ def test_cache_persists(tmp_home):
     assert c2.get("m", "en", "alpha") == "阿尔法"
 
 
+def test_cache_autosave_does_not_deadlock(tmp_home):
+    """第 25 次 put 会自动落盘，绝不能自我死锁（真实故障：截图翻译第 3 次卡死）。
+
+    旧实现 put() 持着 self._lock 调 flush()，而 flush() 又要拿同一把
+    **非可重入**锁 ⇒ 该线程永久卡住：界面停在"正在识别并翻译"，关窗时主线程
+    抢同一把锁而冻结（Windows 报"Python 未响应"）。
+
+    这里用带超时的 join 守住：一旦回归，测试失败而不是把整个测试套件挂死。
+    """
+    import json
+    import threading
+
+    cache_path = tmp_home / "cache.json"
+    cache = TranslationCache(path=cache_path)
+    done = threading.Event()
+
+    def work():
+        for i in range(60):          # 会跨过 25 与 50 两个自动落盘点
+            cache.put("m", "auto", f"t{i}", f"o{i}")
+        done.set()
+
+    th = threading.Thread(target=work, daemon=True)
+    th.start()
+    assert done.wait(timeout=10), "第 25 次 put 之后卡住了（缓存锁自我死锁回归）"
+    assert not th.is_alive()
+    saved = json.loads(cache_path.read_text(encoding="utf-8"))
+    assert len(saved) >= 25, len(saved)   # 至少落盘过一次
+    assert not cache._lock.locked(), "落盘后锁必须已释放"
+
+
+def test_cache_flush_timeout_when_lock_held(tmp_home):
+    """退出兜底：锁被别的线程持有时，flush(timeout) 必须放弃而不是干等。"""
+    import time
+
+    cache = TranslationCache(path=tmp_home / "cache.json")
+    cache.put("m", "en", "a", "甲")
+    cache._lock.acquire()            # 模拟"有线程卡在持锁位置"
+    try:
+        t0 = time.time()
+        assert cache.flush(timeout=0.2) is False
+        assert time.time() - t0 < 3, "flush(timeout) 不应长时间阻塞"
+    finally:
+        cache._lock.release()
+    assert cache.flush(timeout=0.2) is True
+
+
+def test_clients_share_one_http_session():
+    """共享 Session：保持 TCP/TLS 长连接，省掉每次热键重新握手。"""
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    c1 = OpenAiCompatClient(ClientOptions(api_base="https://a.invalid"))
+    c2 = OpenAiCompatClient(ClientOptions(api_base="https://b.invalid"))
+    assert c1._session is c2._session
+
+
+def test_prefix_probed_once_per_base_across_clients():
+    """截图翻译每轮都新建客户端，但 /models 前缀探测只能发生一次。
+
+    真实故障：每按一次热键都重新探测前缀（日志里 4395ms / 1960ms 各一次），
+    再加上重新握手的 TLS，等于每次白等 1~4.5 秒。
+    """
+    from sc_translator.translate import client as client_mod
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    base = "https://prefix-probe.invalid/api"
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"data": []}
+
+    calls: list[str] = []
+
+    def fake_get(url, headers=None, **kw):  # noqa: ARG001
+        calls.append(url)
+        return _Resp()
+
+    client_mod._PREFIX_CACHE.pop(base, None)
+    opts = ClientOptions(api_base=base, api_key="k", model="m", get=fake_get)
+    assert OpenAiCompatClient(opts).resolve_prefix() == base
+    assert OpenAiCompatClient(opts).resolve_prefix() == base   # 新客户端应复用缓存
+    assert len(calls) == 1, calls
+
+    # 换 base（=换服务商）必须重新探测
+    other = base + "-other"
+    client_mod._PREFIX_CACHE.pop(other, None)
+    assert OpenAiCompatClient(ClientOptions(api_base=other, api_key="k", model="m",
+                                            get=fake_get)).resolve_prefix() == other
+    assert len(calls) == 2, calls
+
+
 def test_dpapi_roundtrip():
     data = "sk-secret-中文-键"
     enc = protect(data.encode("utf-8"))

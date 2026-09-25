@@ -16,6 +16,7 @@ from PySide6.QtGui import QCloseEvent, QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -78,6 +79,18 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
+        # ---------------- 设置对话框（右上角齿轮）----------------
+        # 原则：**控件仍建在 MainWindow 上**（属性名不变 —— refresh_overlay_controls() 与
+        # 一批测试都按属性名取控件），只是把它们挂到对话框的布局里；主界面只留"工作流"。
+        self._settings_dialog = self._make_settings_dialog()
+        self._sec_api = self._settings_section("set.api")
+        self._sec_glossary = self._settings_section("set.glossary")
+        self._sec_hotkey = self._settings_section("set.hotkey")
+        self._sec_ocr = self._settings_section("set.ocr")
+        self._sec_out = self._settings_section("set.out")
+        self._sec_overlay = self._settings_section("set.overlay")
+        self._sec_misc = self._settings_section("set.misc")
+
         # ---------------- 顶栏 ----------------
         top = QHBoxLayout()
         title = QLabel(t("app.name"))
@@ -87,7 +100,9 @@ class MainWindow(QMainWindow):
         top.addWidget(title)
         top.addWidget(self._status)
         top.addStretch(1)
-        top.addWidget(QLabel(t("lang.label")))
+        # 界面语言属于"配好就不动"：下拉框进设置对话框，顶栏只留齿轮
+        lang_row = QHBoxLayout()
+        lang_row.addWidget(QLabel(t("lang.label")))
         self._lang = QComboBox()
         for code, label in i18n.languages():
             self._lang.addItem(label, code)
@@ -95,47 +110,58 @@ class MainWindow(QMainWindow):
         self._lang.setCurrentIndex(idx if idx >= 0 else 0)
         self._lang.setFixedWidth(130)
         self._lang.currentIndexChanged.connect(self._on_language_changed)
-        top.addWidget(self._lang)
+        lang_row.addWidget(self._lang)
+        lang_row.addStretch(1)
+        self._sec_misc.addLayout(lang_row)
+        self._btn_settings = QPushButton(t("btn.settings"))
+        self._btn_settings.setToolTip(t("btn.settings.tip"))
+        self._btn_settings.clicked.connect(self._open_settings)
+        top.addWidget(self._btn_settings)
         root.addLayout(top)
 
-        # ---------------- API 配置 ----------------
-        cfg = QFrame()
-        cfg.setObjectName("card")
-        cl = QHBoxLayout(cfg)
-        cl.setContentsMargins(10, 8, 10, 8)
-        cl.setSpacing(6)
+        # ---------------- API 配置（进设置对话框：服务商/模型一行，地址/Key 一行）
+        r1 = QHBoxLayout()
+        r1.setSpacing(6)
+        r2 = QHBoxLayout()
+        r2.setSpacing(6)
+        self._sec_api.addLayout(r1)
+        self._sec_api.addLayout(r2)
         self._provider = QComboBox()
         for key, label in provider_choices():
             self._provider.addItem(label, key)
         pidx = self._provider.findData(s.api_provider or "DeepSeek")
         self._provider.setCurrentIndex(pidx if pidx >= 0 else 0)
         self._provider.currentIndexChanged.connect(self._on_provider_changed)
-        cl.addWidget(QLabel(t("provider.label")))
-        cl.addWidget(self._provider)
-        cl.addWidget(QLabel("API"))
-        self._api_base = QLineEdit(s.api_base)
-        self._api_base.setMinimumWidth(220)
-        cl.addWidget(self._api_base, 1)
-        cl.addWidget(QLabel("Key"))
-        self._keyline = KeyLine()
-        self._keyline.setText(s.load_api_key())
-        cl.addWidget(self._keyline, 2)
+        r1.addWidget(QLabel(t("provider.label")))
+        r1.addWidget(self._provider)
+        r1.addWidget(QLabel(t("provider.model")))
         self._model = QComboBox()
         self._model.setEditable(True)
         if s.model:
             self._model.addItem(s.model)
         self._model.setInsertPolicy(QComboBox.NoInsert)
-        cl.addWidget(self._model)
+        r1.addWidget(self._model, 1)
         self._btn_models = QPushButton(t("btn.models"))
         self._btn_models.clicked.connect(self._fetch_models)
-        cl.addWidget(self._btn_models)
+        r1.addWidget(self._btn_models)
         self._btn_test = QPushButton(t("btn.test"))
         self._btn_test.clicked.connect(self._test_api)
-        cl.addWidget(self._btn_test)
+        r1.addWidget(self._btn_test)
+        r1.addStretch(1)
+        r2.addWidget(QLabel("API"))
+        self._api_base = QLineEdit(s.api_base)
+        self._api_base.setMinimumWidth(220)
+        r2.addWidget(self._api_base, 1)
+        r2.addWidget(QLabel("Key"))
+        self._keyline = KeyLine()
+        self._keyline.setText(s.load_api_key())
+        r2.addWidget(self._keyline, 2)
         self._btn_logs = QPushButton(t("btn.logs"))
         self._btn_logs.clicked.connect(self._open_logs)
-        cl.addWidget(self._btn_logs)
-        root.addWidget(cfg)
+        logs_row = QHBoxLayout()
+        logs_row.addWidget(self._btn_logs)
+        logs_row.addStretch(1)
+        self._sec_misc.addLayout(logs_row)
         self._api_base.textChanged.connect(self._save_api_base)
         self._model.currentTextChanged.connect(self._save_model)
 
@@ -158,7 +184,7 @@ class MainWindow(QMainWindow):
         self._gl_state = QLabel("")
         self._gl_state.setObjectName("hint")
         gll.addWidget(self._gl_state)
-        root.addWidget(gl)
+        self._sec_glossary.addWidget(gl)
         self._refresh_glossary_state()
 
         # ---------------- 嘴臭模式 ----------------
@@ -323,24 +349,36 @@ class MainWindow(QMainWindow):
 
         # ---------------- 按需截图翻译（热键触发）----------------
         snap_card, snap = make_card(t("snap.title"))
-        srow = QHBoxLayout()
+        # 热键（启用开关 + 两个录入）属于"配好就不动"：进设置对话框
+        hk1 = QHBoxLayout()
         self._snap_enable = QCheckBox(t("snap.enable"))
         self._snap_enable.setChecked(bool(s.snap_enabled))
         self._snap_enable.toggled.connect(self._on_snap_enabled)
-        srow.addWidget(self._snap_enable)
-        srow.addWidget(QLabel(t("snap.key_label")))
+        hk1.addWidget(self._snap_enable)
+        hk1.addStretch(1)
+        self._sec_hotkey.addLayout(hk1)
+        hk2 = QHBoxLayout()
+        hk2.addWidget(QLabel(t("snap.key_label")))
         # 点一下直接按组合键录入；录入期间临时注销全局热键，避免按键本身触发动作
         self._snap_key = HotkeyEdit(
             s.snap_hotkey, on_edit_start=self._begin_hotkey_edit, on_edit_done=self._on_snap_keys_changed
         )
         self._snap_key.setFixedWidth(130)
-        srow.addWidget(self._snap_key)
-        srow.addWidget(QLabel(t("snap.key_select_label")))
+        hk2.addWidget(self._snap_key)
+        hk2.addWidget(QLabel(t("snap.key_select_label")))
         self._snap_key2 = HotkeyEdit(
             s.snap_hotkey_select, on_edit_start=self._begin_hotkey_edit, on_edit_done=self._on_snap_keys_changed
         )
         self._snap_key2.setFixedWidth(130)
-        srow.addWidget(self._snap_key2)
+        hk2.addWidget(self._snap_key2)
+        hk2.addStretch(1)
+        self._sec_hotkey.addLayout(hk2)
+        self._snap_state = QLabel("…")
+        self._snap_state.setObjectName("hint")
+        self._sec_hotkey.addWidget(self._snap_state)
+
+        # 触发按钮留在主界面（工作流：游戏里随手按/点）
+        srow = QHBoxLayout()
         self._btn_snap_now = QPushButton(t("snap.btn_now"))
         self._btn_snap_now.clicked.connect(self.on_snap_hotkey)
         srow.addWidget(self._btn_snap_now)
@@ -378,7 +416,7 @@ class MainWindow(QMainWindow):
         self._snap_write_main.toggled.connect(lambda v: self._save_flag("snap_write_main", v))
         drow.addWidget(self._snap_write_main)
         drow.addStretch(1)
-        snap.addLayout(drow)
+        self._sec_out.addLayout(drow)
 
         # CPU 亲和（可选，默认关）：把整个程序限制到单个小核，避免和游戏抢大核
         crow = QHBoxLayout()
@@ -387,12 +425,25 @@ class MainWindow(QMainWindow):
         self._cpu_pin.setToolTip(t("chk.cpu_pin.tip"))
         self._cpu_pin.toggled.connect(self._on_cpu_pin_toggled)
         crow.addWidget(self._cpu_pin)
+        # OCR 设备：CPU ⇄ GPU（DirectML）。需要 onnxruntime-directml，没装会把开关退回 CPU。
+        self._ocr_gpu = QCheckBox(t("chk.ocr_gpu"))
+        self._ocr_gpu.setChecked(bool(s.ocr_use_gpu))
+        self._ocr_gpu.setToolTip(t("chk.ocr_gpu.tip"))
+        self._ocr_gpu.toggled.connect(self._on_ocr_gpu_toggled)
+        crow.addWidget(self._ocr_gpu)
+        # 方案 C：整条链路换成"模型直接读图"（识别+翻译一次完成，不做本地 OCR）
+        self._ocr_vision = QCheckBox(t("chk.ocr_vision"))
+        self._ocr_vision.setChecked(bool(s.ocr_vision))
+        self._ocr_vision.setToolTip(t("chk.ocr_vision.tip"))
+        self._ocr_vision.toggled.connect(self._on_ocr_vision_toggled)
+        crow.addWidget(self._ocr_vision)
+        self._ocr_gpu.setEnabled(not bool(s.ocr_vision))   # 读图模式下 GPU 无意义
         crow.addStretch(1)
-        snap.addLayout(crow)
+        self._sec_ocr.addLayout(crow)
 
         self._snap_state = QLabel("…")
         self._snap_state.setObjectName("hint")
-        snap.addWidget(self._snap_state)
+        self._sec_hotkey.addWidget(self._snap_state)
 
         sbody = QHBoxLayout()
         sbody.addWidget(QLabel(t("snap.col_src")))
@@ -477,7 +528,7 @@ class MainWindow(QMainWindow):
         orow.addWidget(self._btn_ov_show)
         orow.addStretch(1)
         ovc.addLayout(orow)
-        root.addWidget(ov_card)
+        self._sec_overlay.addWidget(ov_card)
 
         QShortcut(QKeySequence("Ctrl+Return"), self, activated=self._translate_to_zh)
         QShortcut(QKeySequence("Ctrl+Enter"), self, activated=self._translate_to_zh)
@@ -494,6 +545,55 @@ class MainWindow(QMainWindow):
         self._refresh_gamecode_state()
         self._refresh_gc_mode()
         self._refresh_snap_state()
+
+    # ---------------- 设置对话框 ----------------
+    def _make_settings_dialog(self) -> QDialog:
+        """构建"配好就不动"的设置对话框（右上角齿轮打开，模态）。
+
+        为什么把所有控件仍建在 MainWindow 上：``refresh_overlay_controls()`` 按属性名
+        同步 8 个勾选 + 5 个旋钮，一批测试也按属性名取控件（`win._ov_*` / `win._snap_*`
+        / `win._ocr_gpu` …）。只把它们的**父布局**换成对话框里的布局，就能在不动业务
+        逻辑、不改测试的前提下把主界面瘦下来。
+        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle(t("set.title"))
+        dlg.setModal(True)
+        outer = QVBoxLayout(dlg)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+        scroll = QScrollArea(dlg)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        host = QWidget()
+        self._set_lay = QVBoxLayout(host)
+        self._set_lay.setContentsMargins(4, 4, 4, 4)
+        self._set_lay.setSpacing(12)
+        scroll.setWidget(host)
+        outer.addWidget(scroll, 1)
+        brow = QHBoxLayout()
+        brow.addStretch(1)
+        btn_close = QPushButton(t("set.close"))
+        btn_close.clicked.connect(dlg.accept)
+        brow.addWidget(btn_close)
+        outer.addLayout(brow)
+        dlg.resize(780, 800)
+        return dlg
+
+    def _settings_section(self, title_key: str) -> QVBoxLayout:
+        """在设置对话框里开一个带标题的小节，返回可往里加控件的布局。"""
+        box = QVBoxLayout()
+        box.setSpacing(6)
+        head = QLabel(t(title_key))
+        head.setStyleSheet("font-weight:600;")
+        box.addWidget(head)
+        self._set_lay.addLayout(box)
+        return box
+
+    def _open_settings(self) -> None:
+        """打开设置对话框（模态；关闭后设置已即时生效并落盘）。"""
+        log.info("打开设置对话框")
+        self._settings_dialog.exec()
 
     # ---------------- 按需截图翻译 ----------------
     def _refresh_snap_state(self) -> None:
@@ -568,7 +668,7 @@ class MainWindow(QMainWindow):
         s.save()
         ov = getattr(self.app, "overlay", None)
         if ov is not None:
-            ov.set_reply_enabled(bool(on), notify_main=False)
+            ov.set_reply_enabled(bool(on))
 
     def _on_ov_autocopy_toggled(self, on: bool) -> None:
         """浮窗回话译文自动复制开关：落盘（浮窗回话时实时读取该设置）。"""
@@ -648,6 +748,30 @@ class MainWindow(QMainWindow):
         else:
             self.app.release_cpu_pin()
             self._set_status(t("status.cpu_pin_off"))
+
+    def _on_ocr_gpu_toggled(self, on: bool) -> None:
+        """OCR 设备开关：CPU ⇄ GPU(DirectML)。
+
+        GPU 需要 onnxruntime-directml；没装时 ``apply_ocr_mode()`` 会把设置退回 CPU，
+        这里同步把勾选取消并说明原因（沿用热键/嗅探失败时的"回滚 + 提示"约定）。
+        """
+        s = self.app.settings
+        s.ocr_use_gpu = bool(on)
+        s.save()
+        ok, msg = self.app.apply_ocr_mode()
+        if not ok:
+            blk = self._ocr_gpu.blockSignals(True)
+            self._ocr_gpu.setChecked(False)
+            self._ocr_gpu.blockSignals(blk)
+        self._set_status(msg)
+
+    def _on_ocr_vision_toggled(self, on: bool) -> None:
+        """识别方式：本地 OCR ⇄ 模型直接读图（方案 C）。只改设置，不需要重建引擎。"""
+        s = self.app.settings
+        s.ocr_vision = bool(on)
+        s.save()
+        self._ocr_gpu.setEnabled(not on)      # 读图模式下本地 OCR 不参与，GPU 开关无意义
+        self._set_status(t("status.vision_on") if on else t("status.vision_off"))
 
     # ---- 热键录入 ----
     def _begin_hotkey_edit(self) -> None:
@@ -736,8 +860,28 @@ class MainWindow(QMainWindow):
             self._show_snap_result(res)
 
         self.app.snapshot.run(
-            region, done, max_lines=int(s.snap_max_lines or 40), use_cache=True
+            region, done, max_lines=int(s.snap_max_lines or 40), use_cache=True,
+            on_ocr=self._show_snap_partial,
         )
+
+    def _show_snap_partial(self, sources) -> None:
+        """OCR 刚结束、译文还在路上：先把原文以「识别中…」显示出来。
+
+        用户对延迟的感受主要来自"按了热键之后一片安静"，先出原文能把等待变成有反馈；
+        译文回来时按同一个 key 原地替换（见 OverlayWindow.push_lines 的 upsert）。
+        """
+        if not self.app.settings.snap_show_overlay:
+            return
+        ov = getattr(self.app, "overlay", None)
+        if ov is None:
+            return
+        try:
+            ov.push_lines(
+                [{"key": src, "text": src, "translated": "", "pending": True} for src in sources]
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("推送「识别中」行失败（忽略）: %s", exc)
+        self._set_status(t("snap.recognized", n=len(sources)))
 
     def _show_snap_result(self, res) -> None:
         s = self.app.settings
@@ -746,7 +890,10 @@ class MainWindow(QMainWindow):
         if res.error:
             note_bits.append(res.error)
         if res.elapsed_ms:
-            note_bits.append(t("snap.note_timing", ocr=res.ocr_ms, total=res.elapsed_ms))
+            note_bits.append(
+                t("snap.note_timing_vision", total=res.elapsed_ms) if getattr(res, "vision", False)
+                else t("snap.note_timing", ocr=res.ocr_ms, total=res.elapsed_ms)
+            )
         note = "  ".join(note_bits)
 
         if pairs and s.snap_write_main:
@@ -1463,7 +1610,7 @@ class MainWindow(QMainWindow):
         if ov is not None:
             ov.apply_theme()
             ov.retranslate()
-            ov.set_reply_enabled(bool(s.reply_enabled), notify_main=False)
+            ov.set_reply_enabled(bool(s.reply_enabled))
 
     def _open_logs(self) -> None:
         try:

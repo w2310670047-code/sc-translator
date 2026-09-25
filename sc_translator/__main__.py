@@ -199,10 +199,16 @@ def _doctor(online: bool) -> int:
         svc.ocr._ensure()                     # 触发加载 onnx 模型（随包与否立刻见分晓）
         svc.close()
         ms = int((time.time() - t0) * 1000)
+        from .ocr import gpu_providers
+
+        provs = gpu_providers()
+        accel = ("GPU(" + "+".join(provs) + ")") if provs else "仅 CPU（无 GPU provider）"
+        mode = "模型直接读图" if s.ocr_vision else ("GPU" if s.ocr_use_gpu else "CPU")
         return (
             f"热键 {snapshot.hotkey_label(s.snap_hotkey)} 截图翻译 / "
             f"{snapshot.hotkey_label(s.snap_hotkey_select)} 重框；区域 {area}；"
-            f"RapidOCR 模型加载 {ms}ms{'（已启用）' if s.snap_enabled else '（热键已停用）'}"
+            f"RapidOCR 模型加载 {ms}ms{'（已启用）' if s.snap_enabled else '（热键已停用）'}；"
+            f"可用加速={accel}；识别方式={mode}"
         )
 
     step("截图翻译（OCR）", _snapshot)

@@ -457,10 +457,12 @@ _T: dict[str, tuple[str, str, str]] = {
     ),
     "ov.pin": ("固定", "固定", "Pin"),
     "ov.unpin": ("取消固定", "取消固定", "Unpin"),
+    "ov.click_through.on": ("⇱ 穿透：开", "⇱ 穿透：開", "⇱ Through: on"),
+    "ov.click_through.off": ("⇱ 穿透：关", "⇱ 穿透：關", "⇱ Through: off"),
     "ov.pin.tip": (
-        "回到鼠标穿透状态（游戏内不挡操作）",
-        "回到滑鼠穿透狀態（遊戲內不擋操作）",
-        "Back to click-through so it does not block the game",
+        "回到鼠标穿透状态（滚动区/回话条仍可用，其余区域不挡游戏操作）",
+        "回到滑鼠穿透狀態（捲動區／回話條仍可用，其餘區域不擋遊戲操作）",
+        "Back to click-through (the transcript area and reply bar still work; the rest does not block the game)",
     ),
     "ov.hide.tip": (
         "隐藏悬浮框；之后点主窗口「显示浮窗」可再打开",
@@ -588,13 +590,18 @@ _T: dict[str, tuple[str, str, str]] = {
     ),
     "ovc.click_through": ("鼠标穿透", "滑鼠穿透", "Click-through"),
     "ovc.click_through.tip": (
-        "勾选=整窗鼠标穿透不挡操作（未固定态）；取消=可交互（固定态）。浮窗里点「固定」也会改这里",
-        "勾選=整窗滑鼠穿透不擋操作（未固定態）；取消=可互動（固定態）。懸浮框裡點「固定」也會改這裡",
-        "On = the whole window is click-through (unpinned); off = interactive (pinned). The overlay's 「Pin」 button changes this too",
+        "穿透=不挡游戏操作：译文滚动区与回话条仍可点/可滚/可输入，其余区域（含空白）点击与滚轮交给下面的游戏；取消=整窗可交互（固定态，可拖动/缩放）。标题栏上也有同一个开关",
+        "穿透=不擋遊戲操作：譯文捲動區與回話條仍可點/可滾/可輸入，其餘區域（含空白）點擊與滾輪交給下面的遊戲；取消=整窗可互動（固定態，可拖動/縮放）。標題列上也有同一個開關",
+        "On = do not block the game: the transcript scroll area and the reply bar stay clickable/scrollable, while clicks and wheel over everything else (including empty space) go to the game below. Off = the whole window is interactive (pinned; draggable/resizable). The overlay title bar has the same switch",
     ),
 
     # ---- 主窗口：截图翻译补充 ----
     "snap.max_lines": ("单次最多行数", "單次最多行數", "Max lines per capture"),
+    "snap.recognized": (
+        "已识别 {n} 行，正在翻译…",
+        "已識別 {n} 行，正在翻譯…",
+        "Recognized {n} line(s); translating…",
+    ),
     "snap.max_lines.tip": (
         "一次截图最多送几行去翻译（防误框整屏烧 token）；超出的行丢弃",
         "一次截圖最多送幾行去翻譯（防誤框整屏燒 token）；超出的行丟棄",
@@ -607,8 +614,76 @@ _T: dict[str, tuple[str, str, str]] = {
         "Also write results into the main window panes; with both popups off this is the only place results appear",
     ),
 
-    # ---- 主窗口：CPU 亲和开关 ----
+    # ---- 主窗口：CPU 亲和 / OCR 设备 ----
     "chk.cpu_pin": ("限制到单个小核", "限制到單個小核", "Limit to one efficiency core"),
+    "chk.ocr_gpu": ("GPU 加速（DirectML）", "GPU 加速（DirectML）", "GPU acceleration (DirectML)"),
+    "chk.ocr_gpu.tip": (
+        "用显卡跑 OCR，实测约快 5 倍（0.48s→0.09s），固定占用约 200MB 显存、不随识别次数增长。"
+        "需要 onnxruntime-directml；没装时会保持 CPU 并在状态栏提示",
+        "用顯卡跑 OCR，實測約快 5 倍（0.48s→0.09s），固定佔用約 200MB 顯存、不隨識別次數增長。"
+        "需要 onnxruntime-directml；沒裝時會保持 CPU 並在狀態列提示",
+        "Run OCR on the GPU: measured ~5x faster (0.48s -> 0.09s), a flat ~200MB of VRAM that does not grow with usage. "
+        "Requires onnxruntime-directml; without it the app stays on CPU and says so in the status bar",
+    ),
+    "status.ocr_gpu_on": (
+        "已切到 GPU 模式（DirectML）：下次识别会先初始化显卡会话（约 1~4 秒），之后每次约 0.1 秒",
+        "已切到 GPU 模式（DirectML）：下次識別會先初始化顯卡工作階段（約 1~4 秒），之後每次約 0.1 秒",
+        "GPU mode (DirectML) enabled: the next capture initializes the GPU session (~1-4s), then ~0.1s per capture",
+    ),
+    "status.ocr_gpu_off": (
+        "已切回 CPU 模式（显卡会话已释放）",
+        "已切回 CPU 模式（顯卡工作階段已釋放）",
+        "Back to CPU mode (the GPU session has been released)",
+    ),
+    "status.ocr_gpu_missing": (
+        "未安装 GPU 运行时，已保持 CPU 模式：执行 pip install onnxruntime-directml 后重新打开程序即可启用",
+        "未安裝 GPU 執行階段，已保持 CPU 模式：執行 pip install onnxruntime-directml 後重新開啟程式即可啟用",
+        "No GPU runtime found, staying on CPU: run pip install onnxruntime-directml and restart to enable it",
+    ),
+    "chk.ocr_vision": ("模型直接读图（跳过本地 OCR）", "模型直接讀圖（跳過本地 OCR）", "Let the model read the image (skip local OCR)"),
+    "btn.settings": ("⚙ 设置", "⚙ 設定", "⚙ Settings"),
+    "btn.settings.tip": (
+        "打开设置：服务商/API Key/模型、术语表、热键、OCR 加速与读图、结果显示位置、译文浮窗、界面语言与日志",
+        "開啟設定：服務商/API Key/模型、術語表、熱鍵、OCR 加速與讀圖、結果顯示位置、譯文懸浮框、介面語言與日誌",
+        "Open settings: provider/API key/model, glossary, hotkeys, OCR acceleration & image-reading, where results go, the overlay, UI language and logs",
+    ),
+    "set.title": ("设置", "設定", "Settings"),
+    "set.close": ("关闭", "關閉", "Close"),
+    "set.api": ("服务商与模型", "服務商與模型", "Provider and model"),
+    "set.glossary": ("SC 术语表（专名预替换）", "SC 術語表（專名預替換）", "SC glossary (proper-noun pre-replacement)"),
+    "set.hotkey": ("截图翻译热键", "截圖翻譯熱鍵", "Screenshot hotkeys"),
+    "set.ocr": ("OCR 识别方式与性能", "OCR 識別方式與效能", "OCR engine and performance"),
+    "set.out": ("截图结果去哪里", "截圖結果去哪裡", "Where screenshot results go"),
+    "set.overlay": ("译文浮窗", "譯文懸浮框", "Translation overlay"),
+    "set.misc": ("界面与日志", "介面與日誌", "Interface and logs"),
+    "provider.model": ("模型", "模型", "Model"),
+    "chk.ocr_vision.tip": (
+        "把框选的小图直接发给多模态模型，由它一次完成识别+翻译：不吃本机 CPU/显存，"
+        "但**截图会离开本机**、每次要联网（官方上限 1024 图片 token/张，用 detail=low 缩到 512）。"
+        "开启后「GPU 加速」不再有意义（已自动置灰）",
+        "把框選的小圖直接發給多模態模型，由它一次完成識別+翻譯：不吃本機 CPU/顯存，"
+        "但**截圖會離開本機**、每次要連網（官方上限 1024 圖片 token/張，用 detail=low 縮到 512）。"
+        "開啟後「GPU 加速」不再有意義（已自動置灰）",
+        "Send the framed crop straight to the multimodal model, which does recognition + translation in one call: "
+        "no local CPU/VRAM cost, but **the screenshot leaves this machine** and it needs the network "
+        "(official cap: 1024 image tokens per image; detail=low scales to 512). "
+        "When on, GPU acceleration is pointless and gets greyed out",
+    ),
+    "status.vision_on": (
+        "已启用「模型直接读图」：截图会上传到服务商，本地 OCR 不再参与",
+        "已啟用「模型直接讀圖」：截圖會上傳到服務商，本地 OCR 不再參與",
+        "Image-reading mode on: crops are uploaded to the provider and local OCR is bypassed",
+    ),
+    "status.vision_off": (
+        "已关闭「模型直接读图」，回到本地 OCR（识别 + 翻译两段）",
+        "已關閉「模型直接讀圖」，回到本地 OCR（識別 + 翻譯兩段）",
+        "Image-reading mode off; back to local OCR (recognize, then translate)",
+    ),
+    "snap.note_timing_vision": (
+        "读图+翻译 {total} ms",
+        "讀圖+翻譯 {total} ms",
+        "image read + translate {total} ms",
+    ),
     "chk.cpu_pin.tip": (
         "把整个程序（含截图翻译的 OCR）绑定到 1 个小核/效率核上，尽量不和游戏抢大核。\n"
         "没有小核的机器上最多占 2 个逻辑处理器、且绝不独占整机；代价：OCR 会变慢（单核）。",

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import unicodedata
@@ -15,6 +16,32 @@ from typing import Optional
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+#: 检测阶段输入尺寸。RapidOCR 默认 `limit_side_len=736` + `limit_type="min"` 会把**短边放大**到
+#: 736（499×282 的框选 → 约 1302×736，按配置语义推算约 6.8 倍像素）。实测降到 512 后
+#: 0.56~0.66s → 0.40~0.42s（−33%），同样的九行合成图识别结果完全一致（9/9）。
+#: 想再快可改 384（实测 −40%、同样 9/9），但真机复杂画面未验，故默认取保守的 512。
+DET_LIMIT_SIDE_LEN = 512
+
+
+def gpu_providers() -> list[str]:
+    """本机 onnxruntime 里可用的 **GPU** provider（DirectML / CUDA）。
+
+    GPU 模式需要 ``onnxruntime-directml``（它替换 CPU 版 onnxruntime，两者不能共存）；
+    没有就返回空列表——调用方应保持 CPU 并**如实告诉用户**，不要静默降级。
+    """
+    try:
+        import onnxruntime as ort
+
+        return [p for p in ort.get_available_providers()
+                if p in ("DmlExecutionProvider", "CUDAExecutionProvider")]
+    except Exception as exc:  # noqa: BLE001
+        log.debug("查询 onnxruntime providers 失败: %s", exc)
+        return []
+
+
+def gpu_provider_available() -> bool:
+    return bool(gpu_providers())
 
 
 @dataclass
@@ -91,27 +118,74 @@ class OcrEngine:
     intra=2 时单次识别烧 ~1.8 秒 CPU（≈3.4 核），intra=1 时仅 ~0.75 秒（≈1 核）。
     为保证整体占用低，默认固定单线程推理；代价是单次识别 wall 时间约 0.5~0.9 秒，
     配合 3 秒更新间隔平均占用约 25% 单核。
+
+    另有两项提速（第 21 轮，实测数据见 §二十三）：
+    - ``det_limit_side_len`` 从 RapidOCR 默认的 736 降到 512：默认配置是
+      ``limit_type="min"``，会把**短边放大**到 736（499×282 的框选 → 约 1302×736），
+      实测把 0.56~0.66s 降到 0.40~0.42s，同样的九行图识别结果一致；
+    - 同一帧的哈希缓存：连续按热键、画面没变时直接复用上次结果（OCR 是整条链路里最贵的一步）。
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, use_gpu: bool = False, **kwargs) -> None:
         self._engine = None
         kwargs.setdefault("intra_op_num_threads", 1)   # 关键：限制推理线程，CPU 大头
         kwargs.setdefault("inter_op_num_threads", 1)
+        kwargs.setdefault("det_limit_side_len", DET_LIMIT_SIDE_LEN)
+        self.use_gpu_requested = bool(use_gpu)
+        provs = gpu_providers() if use_gpu else []
+        # 实测（RTX 5060 Ti / 499×282 九行图）：CPU 0.48s → DirectML 0.09s（约 5 倍），
+        # 显存固定 +约 210MB 且不随推理次数增长。
+        if "DmlExecutionProvider" in provs:
+            kwargs.setdefault("det_use_dml", True)
+            kwargs.setdefault("cls_use_dml", True)
+            kwargs.setdefault("rec_use_dml", True)
+        elif "CUDAExecutionProvider" in provs:
+            kwargs.setdefault("det_use_cuda", True)
+            kwargs.setdefault("cls_use_cuda", True)
+            kwargs.setdefault("rec_use_cuda", True)
+        elif use_gpu:
+            log.warning("请求 GPU 模式，但 onnxruntime 没有 GPU provider（需 pip install onnxruntime-directml），本次按 CPU 运行")
+        self.gpu_active = bool(use_gpu and provs)     # 实际是否用上了 GPU
         self._kwargs = kwargs
+        self._last_digest: Optional[bytes] = None      # 帧哈希 → 同画面复用结果
+        self._last_rows: list[OcrLine] = []
 
     def _ensure(self):
         if self._engine is None:
             from rapidocr_onnxruntime import RapidOCR
 
-            log.info("初始化 RapidOCR（首次加载模型需数秒）...")
+            log.info("初始化 RapidOCR（首次加载模型需数秒；设备=%s）...", "GPU" if self.gpu_active else "CPU")
             self._engine = RapidOCR(**self._kwargs)
-            log.info("RapidOCR 就绪")
+            log.info("RapidOCR 就绪（%s）", "GPU" if self.gpu_active else "CPU")
         return self._engine
 
+    def close(self) -> None:
+        """释放引擎并清空缓存：切 CPU/GPU 模式或退出时用（GPU 会话占的显存随之归还）。"""
+        self._engine = None
+        self._last_digest = None
+        self._last_rows = []
+
     def recognize(self, bgr: np.ndarray) -> list[OcrLine]:
-        """BGR ndarray -> 按视觉行排序的 OcrLine 列表（空区域返回 []）。"""
+        """BGR ndarray -> 按视觉行排序的 OcrLine 列表（空区域返回 []）。
+
+        同一帧（画面没变的连续按热键）直接复用上次结果：哈希 42 万像素约 0.2ms，
+        而 OCR 要 400ms 以上。
+        """
         if bgr is None or bgr.size == 0:
             return []
+        digest = hashlib.blake2b(bgr.tobytes(), digest_size=8).digest()
+        if digest == self._last_digest:
+            log.debug("帧未变化，复用上次 OCR 结果（%d 行）", len(self._last_rows))
+            return list(self._last_rows)
+        rows = self._recognize_uncached(bgr)
+        if rows is None:              # 引擎异常：不缓存，下次重算
+            return []
+        self._last_digest = digest
+        self._last_rows = rows
+        return list(rows)
+
+    def _recognize_uncached(self, bgr: np.ndarray) -> Optional[list[OcrLine]]:
+        """真正的识别；引擎调用失败返回 None（调用方据此决定不写缓存）。"""
         eng = self._ensure()
         enhanced = _enhance_low_contrast(bgr)
         if enhanced is not None:
@@ -120,7 +194,7 @@ class OcrEngine:
             raw = eng(bgr)
         except Exception as exc:  # noqa: BLE001
             log.warning("OCR 调用失败: %s", exc)
-            return []
+            return None
         if not raw:
             return []
         # rapidocr-onnxruntime 返回 (result, elapse) 或新版直接 result

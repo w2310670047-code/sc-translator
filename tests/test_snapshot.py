@@ -215,8 +215,83 @@ def test_run_delivers_result_via_callback():
     assert got[0].lines[0].source == "Quantum travel"
 
 
+def test_work_reports_ocr_text_before_translation():
+    """分阶段反馈：OCR 一结束就先回调原文，且必须**早于**翻译请求。"""
+    order: list[tuple] = []
+    client = _FakeClient()
+    svc = _svc(["Quantum travel", "12345", "Bounty"], client)
+
+    def on_ocr(texts):
+        order.append((list(texts), len(client.calls)))   # 此刻已发生的翻译调用次数
+
+    svc._work(REGION, max_lines=40, use_cache=True, on_ocr=on_ocr)
+    assert order == [(["Quantum travel", "Bounty"], 0)], order
+    assert len(client.calls) == 1, "翻译照常只发一次"
+
+
 def test_run_delivers_error_result():
     got = []
     svc = _svc(["x"], _FakeClient())
     svc.run({}, got.append, max_lines=10)
     assert len(got) == 1 and got[0].error
+
+
+def test_consecutive_runs_with_real_cache_do_not_hang(tmp_home):
+    """连续截图翻译不得卡死：真实故障是第 3 次永远停在"正在识别并翻译"。
+
+    端到端复现路径：真实 ``OpenAiCompatClient`` + 真实 ``TranslationCache``，
+    只把 HTTP 传输换成假响应。每次 10 行新文本，跑 3 次就会跨过缓存第 25 次
+    自动落盘的临界点（旧实现在那里自我死锁 ⇒ 工作线程永不返回）。
+
+    用带超时的线程守住：一旦回归，测试失败而不是把整个测试套件挂死。
+    """
+    import threading
+
+    from sc_translator.translate.cache import TranslationCache
+    from sc_translator.translate.client import ClientOptions, OpenAiCompatClient
+
+    cache = TranslationCache(path=tmp_home / "cache.json")
+    gets: list[str] = []
+
+    class _Resp:
+        status_code = 200
+        text = ""
+
+        def __init__(self, content=""):
+            self._content = content
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    def fake_post(url, payload=None, headers=None, **kw):  # noqa: ARG001
+        n = len((payload or {}).get("messages", [{}])[-1].get("content", "").splitlines())
+        return _Resp("\n".join(f"{i + 1}. 译文{i + 1}" for i in range(n)))
+
+    def fake_get(url, headers=None, **kw):  # noqa: ARG001
+        gets.append(url)
+        return _Resp("")          # resolve_prefix 只看 status_code
+
+    class _App:
+        def make_client(self, use_cache=True):
+            opts = ClientOptions(api_base="https://fake.invalid", api_key="k", model="m",
+                                 post=fake_post, get=fake_get)
+            return OpenAiCompatClient(opts, cache=cache if use_cache else None)
+
+    svc = snapshot.SnapshotService(_App())
+    svc._capture = _FakeCapture()
+    results = []
+
+    def run_three():
+        for run in range(3):
+            svc._ocr = _FakeOcr([f"Quantum travel {run}-{i}" for i in range(10)])
+            results.append(svc._work(REGION, max_lines=40, use_cache=True))
+
+    th = threading.Thread(target=run_three, daemon=True)
+    th.start()
+    th.join(20)
+    assert not th.is_alive(), "连续截图翻译卡住了（缓存自动落盘死锁回归）"
+    assert len(results) == 3
+    assert all(r.error == "" and len(r.lines) == 10 for r in results), [r.error for r in results]
+    assert not cache._lock.locked(), "跑完必须没有残留持锁"
+    # 每轮都会新建客户端，但 /models 前缀探测只能有一次（否则每按一次热键白等 1~4.5 秒）
+    assert len(gets) == 1, gets

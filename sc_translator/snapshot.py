@@ -45,6 +45,7 @@ class SnapResult:
     ocr_ms: int = 0
     translate_ms: int = 0
     error: str = ""
+    vision: bool = False          # True = 由多模态模型直接读图（未走本地 OCR）
 
     @property
     def texts(self) -> list[str]:
@@ -96,7 +97,8 @@ class SnapshotService:
         if self._ocr is None:
             from .ocr import OcrEngine
 
-            self._ocr = OcrEngine()
+            use_gpu = bool(getattr(getattr(self.app, "settings", None), "ocr_use_gpu", False))
+            self._ocr = OcrEngine(use_gpu=use_gpu)
         return self._ocr
 
     def close(self) -> None:
@@ -107,6 +109,13 @@ class SnapshotService:
             except Exception:  # noqa: BLE001
                 pass
         self._capture = None
+        # OCR 引擎也要真正释放：切 CPU/GPU 模式或退出时，GPU 会话占的显存靠它归还
+        if self._ocr is not None:
+            try:
+                self._ocr.close()
+            except Exception:  # noqa: BLE001
+                pass
+            self._ocr = None
 
     # ---------------- 主流程 ----------------
     def run(
@@ -116,9 +125,25 @@ class SnapshotService:
         *,
         max_lines: int = 40,
         use_cache: bool = True,
+        on_ocr: Optional[Callable[[list[str]], None]] = None,
     ) -> None:
-        """在后台线程执行 抓屏 -> OCR -> 翻译，完成后回调 on_done（主线程）。"""
-        self.app.run_in_thread(lambda: self._work(region, max_lines, use_cache), lambda ok, val: self._deliver(ok, val, on_done))
+        """在后台线程执行 抓屏 -> OCR -> 翻译，完成后回调 on_done（主线程）。
+
+        ``on_ocr``：可选的分阶段回调，OCR 一结束就把识别到的原文送**回主线程**
+        （译文还在路上时先让用户看到东西）。
+        """
+        self.app.run_in_thread(
+            lambda: self._work(region, max_lines, use_cache, on_ocr),
+            lambda ok, val: self._deliver(ok, val, on_done),
+        )
+
+    def _post_partial(self, on_ocr: Callable[[list[str]], None], texts: list[str]) -> None:
+        """把"已识别的原文"送回主线程；替身/单测环境没有 post_to_main 就直接调。"""
+        poster = getattr(self.app, "post_to_main", None)
+        if poster is not None:
+            poster(lambda: on_ocr(list(texts)))
+        else:
+            on_ocr(list(texts))
 
     def _deliver(self, ok: bool, val, on_done: Callable[[SnapResult], None]) -> None:
         if ok:
@@ -126,15 +151,11 @@ class SnapshotService:
         else:
             on_done(SnapResult(error=str(val)))
 
-    def _work(self, region: dict, max_lines: int, use_cache: bool) -> SnapResult:
-        t0 = time.time()
-        res = SnapResult()
-        phys = (region or {}).get("physical")
-        if not phys:
-            res.error = "还没有框选截图区域（先按 F10 框选一次）"
-            return res
+    def _grab(self, phys: dict, res: SnapResult):
+        """抓一帧（多后端自动回退：DXGI 桌面复制 → GDI BitBlt → Qt）。
 
-        # 1) 抓屏（多后端自动回退：DXGI 桌面复制 → GDI BitBlt → Qt）
+        失败时把可读原因写进 ``res.error`` 并返回 ``(None, None)``。
+        """
         bgr, backend, cap_err = self.capture.grab_ex(phys)
         if bgr is None:
             res.error = (
@@ -143,9 +164,75 @@ class SnapshotService:
                 "常见原因：游戏开了 HDR、画面带 GPU 保护（DRM），或该后端抓不到此画面。\n"
                 "可尝试：关闭 HDR；把游戏切到窗口化/无边框；若仍失败请把 data\\logs 里的这行发我。"
             )
-            return res
+            return None, None
         if backend != self.capture.BACKENDS[0]:
             log.info("抓屏使用回退后端：%s", backend)
+        return bgr, backend
+
+    @staticmethod
+    def _phys_or_error(region: dict, res: SnapResult):
+        phys = (region or {}).get("physical")
+        if not phys:
+            res.error = "还没有框选截图区域（先按 F10 框选一次）"
+            return None
+        return phys
+
+    def _work_vision(self, region: dict, max_lines: int) -> SnapResult:
+        """方案 C：把框选的小图**直接交给多模态模型**（识别+翻译一次完成，不做本地 OCR）。
+
+        好处：不吃本机 CPU/显存，也不需要 OCR 模型；代价：一次网络往返 + 图片 token，
+        且**截图会离开本机**（用户在主窗口显式打开该开关时才走这条路）。
+        """
+        t0 = time.time()
+        res = SnapResult(vision=True)
+        phys = self._phys_or_error(region, res)
+        if phys is None:
+            return res
+        bgr, backend = self._grab(phys, res)
+        if bgr is None:
+            return res
+        try:
+            import cv2  # 随 OCR 栈一起懒加载；这里只用来编码 PNG
+
+            ok, buf = cv2.imencode(".png", bgr)
+            if not ok:
+                raise RuntimeError("PNG 编码失败")
+            png = buf.tobytes()
+        except Exception as exc:  # noqa: BLE001
+            res.error = f"截图编码失败：{exc}"
+            return res
+
+        t_v = time.time()
+        try:
+            client = self.app.make_client(use_cache=False)   # 图片结果不进文本缓存
+            pairs = client.translate_image(png, target_lang="zh-CN", max_lines=max_lines)
+            res.lines = [SnapLine(source=s, translated=d) for s, d in pairs]
+        except Exception as exc:  # noqa: BLE001
+            res.error = f"读图翻译失败：{exc}"
+        res.translate_ms = int((time.time() - t_v) * 1000)
+        res.elapsed_ms = int((time.time() - t0) * 1000)
+        log.info(
+            "读图翻译（模型直读，不走本地 OCR）：%d 行，抓屏后端 %s，图片 %dKB，耗时 %dms%s",
+            len(res.lines), backend, len(png) // 1024, res.elapsed_ms,
+            f"，错误：{res.error}" if res.error else "",
+        )
+        return res
+
+    def _work(self, region: dict, max_lines: int, use_cache: bool,
+              on_ocr: Optional[Callable[[list[str]], None]] = None) -> SnapResult:
+        # 方案 C：设置里开了「模型直接读图」就整条走多模态，完全不碰本地 OCR 栈
+        if bool(getattr(getattr(self.app, "settings", None), "ocr_vision", False)):
+            return self._work_vision(region, max_lines)
+        t0 = time.time()
+        res = SnapResult()
+        phys = self._phys_or_error(region, res)
+        if phys is None:
+            return res
+
+        # 1) 抓屏
+        bgr, backend = self._grab(phys, res)
+        if bgr is None:
+            return res
 
         # 2) 本地 OCR
         t_ocr = time.time()
@@ -159,6 +246,12 @@ class SnapshotService:
         if not texts:
             res.error = "没有识别到文字（区域可能不含文本，或画面被遮挡）"
             return res
+        # 分阶段反馈：先让用户看到识别到的原文（译文还要等网络往返）
+        if on_ocr is not None:
+            try:
+                self._post_partial(on_ocr, texts)
+            except Exception as exc:  # noqa: BLE001
+                log.debug("分阶段回调失败（忽略）: %s", exc)
 
         # 3) 翻译
         t_tr = time.time()

@@ -140,6 +140,20 @@ idle cost is zero in CPU and in tokens.
   (`Stanton System` → 斯坦顿星系, `Pyro` → 派罗星系)
 - **Timing**: the first press loads the model (~1-3 s, then it stays in memory); afterwards each press takes
   roughly **2-6 s** (OCR 1-3 s + translation 1-2 s)
+- **Settings** (v0.4.9): the **⚙ Settings** button (top right) opens a dialog holding provider/API key/model,
+  the SC glossary, screenshot hotkeys, OCR acceleration and image-reading, where results go, the overlay,
+  UI language and log access — the main window keeps only translation and capture controls
+- **Faster** (v0.4.9): the OCR detection size is tuned to your framed region (measured **-38%**); pressing the
+  hotkey twice on an unchanged frame reuses the previous result (**0.005 s**); `/models` is no longer probed and
+  the connection no longer rebuilt on every press (saves **2-4.5 s**); the recognized text appears first and is
+  replaced in place when the translation arrives
+- **GPU acceleration (DirectML)** (toggle in Settings): OCR measured **0.48 s -> 0.09 s (~5x)** with a flat
+  ~200 MB of VRAM that is released when switched off. The packaged build already bundles the runtime; for source
+  runs install `pip install --force-reinstall --no-deps onnxruntime-directml`
+- **Let the model read the image** (optional, toggle in Settings): sends the framed crop straight to the
+  multimodal model (e.g. `deepseek-flash`), which recognizes and translates in one call and uses **no local
+  CPU/VRAM**; the trade-off is that **the screenshot is uploaded** and image tokens are billed (official cap:
+  1024 per image)
 - **Popup**: appears next to the cursor, auto-avoids screen edges, fades after 8 s (configurable/pinnable);
   hovering pauses the countdown; "Copy all" puts "source → translation" on the clipboard
 - **Guard rail**: at most 40 lines per capture (configurable) so a mis-dragged full-screen region cannot burn tokens;

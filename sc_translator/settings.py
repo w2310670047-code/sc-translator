@@ -76,6 +76,8 @@ class Settings:
     snap_show_overlay: bool = True     # 结果进常驻译文悬浮框（与上一项都关=只写主窗口，手动复制）
     snap_write_main: bool = True       # 结果同时写进主窗口
     snap_max_lines: int = 40           # 单次最多翻译行数（误框整屏时防止烧 token）
+    ocr_use_gpu: bool = False          # OCR 用 GPU(DirectML) 而非 CPU；需 onnxruntime-directml（实测快 ~5 倍、固定占 ~200MB 显存）
+    ocr_vision: bool = False           # 方案C：把框选图直接交给多模态模型（识别+翻译一次完成，跳过本地 OCR；不吃本机 CPU/显存，但截图会离开本机）
     # ---- 界面 ----
     theme: str = "dark"
     ui_language: str = "zh_CN"         # 界面语言: zh_CN / zh_TW / en

@@ -4,10 +4,13 @@
 累积到这里，按原文去重、受 ``settings.max_entries`` 限制；不依赖实时巡逻管线
 （``pipeline.py`` / ``patrol.py`` 已删除）。
 
-- 未固定（默认，游戏内友好）：整窗鼠标穿透不挡操作；
+- 未固定（默认，游戏内友好）：**逐区域**鼠标穿透——译文滚动区与回话输入条仍可
+  点/可滚/可输入，其余区域（标题栏、边距、提示条…）穿透给下面的游戏
+  （实现见 ``nativeEvent``：自己回答 WM_NCHITTEST，非交互区域返回 HTTRANSPARENT）。
   窗边有一个永远可点的小手柄「☰ 固定」——点击即固定，拖动手柄即可移动窗口。
 - 固定后：整窗可交互——拖动标题栏移动、右下角缩放、右键菜单、回话输入、
   点标题栏「取消固定」回到穿透态。
+- 标题栏上有「穿透：开/关」按钮，与主窗口「鼠标穿透」勾选**双向同步**。
 固定/穿透状态与主窗口“鼠标穿透”开关保持同步并持久化。
 
 ctx 需要暴露：``settings``（含 ``save()``）、``mainwin.refresh_overlay_controls()``，
@@ -19,9 +22,10 @@ from __future__ import annotations
 import ctypes
 import html
 import logging
+from ctypes import wintypes
 from typing import Optional
 
-from PySide6.QtCore import QPoint, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -41,21 +45,9 @@ from .theme import palette, overlay_style
 
 log = logging.getLogger(__name__)
 
-WS_EX_LAYERED = 0x00080000
-WS_EX_TRANSPARENT = 0x00000020
-WS_EX_NOACTIVATE = 0x08000000
-GWL_EXSTYLE = -20
+WM_NCHITTEST = 0x0084
+HTTRANSPARENT = -1   # 返回给 Windows：这个点不归我，转给下面的窗口
 
-_user32 = ctypes.windll.user32
-
-
-def _set_click_through(hwnd: int, on: bool) -> None:
-    style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-    if on:
-        style |= WS_EX_TRANSPARENT | WS_EX_LAYERED
-    else:
-        style &= ~WS_EX_TRANSPARENT
-    _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style)
 
 
 class GripHandle(QWidget):
@@ -191,6 +183,12 @@ class OverlayWindow(QWidget):
         self._spicy_btn.setObjectName("ovBtn")
         self._spicy_btn.setToolTip(t("ov.spicy.tip"))
         self._spicy_btn.clicked.connect(lambda: self.set_spicy_mode(not bool(self.ctx.settings.spicy_mode)))
+        # 鼠标穿透开关（与主窗口那个勾选同一个设置，双向同步）：
+        # 放在标题栏上，这样在浮动窗里就能直接切穿透/固定，不必回主窗口
+        self._ct_btn = QPushButton("", self._header)
+        self._ct_btn.setObjectName("ovBtn")
+        self._ct_btn.setToolTip(t("ovc.click_through.tip"))
+        self._ct_btn.clicked.connect(self._toggle_click_through)
         self._pin_btn = QPushButton(t("ov.unpin"), self._header)
         self._pin_btn.setObjectName("ovBtn")
         self._pin_btn.setToolTip(t("ov.pin.tip"))
@@ -202,6 +200,7 @@ class OverlayWindow(QWidget):
         btn_hide.setToolTip(t("ov.hide.tip"))
         btn_hide.clicked.connect(self._on_hide_clicked)
         hlay.addWidget(self._spicy_btn)
+        hlay.addWidget(self._ct_btn)
         hlay.addWidget(self._pin_btn)
         hlay.addWidget(btn_hide)
         wlay.addWidget(self._header)
@@ -294,6 +293,10 @@ class OverlayWindow(QWidget):
 
         self._auto_scroll = True
         self._scroll.verticalScrollBar().valueChanged.connect(self._track_scroll)
+        # 新行插入后 QScrollArea 的滚动范围是**稍后**才更新的：只靠 singleShot(0) 贴底会拿到
+        # 旧 maximum，表现就是"永远差一屏"（实测：推 30 行后 value=0，再推 30 行才跳到上一批的底）。
+        # rangeChanged 在范围真的变了时触发，用它兜底才能贴到最新一行。
+        self._scroll.verticalScrollBar().rangeChanged.connect(self._on_scroll_range_changed)
 
         # 未固定时的拖动手柄（独立小窗，可点可拖）
         self._floating_grip = GripHandle(self)
@@ -322,19 +325,73 @@ class OverlayWindow(QWidget):
         if notify_main and self.ctx.mainwin is not None:
             self.ctx.mainwin.refresh_overlay_controls()
 
+    def _toggle_click_through(self) -> None:
+        """标题栏「穿透」按钮：开=未固定（逐区域穿透），关=固定（整窗可交互）。"""
+        self.set_pinned(not self.pinned())
+
     def _apply_pin_state(self) -> None:
         pinned = self.pinned()
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, not pinned)
+        # 不再用整窗 WA_TransparentForMouseEvents / WS_EX_TRANSPARENT：
+        # 那会把回话输入条与译文滚动区一起废掉。穿透改由 nativeEvent 逐区域判定，
+        # 所以这里始终让本窗口能收到鼠标事件。
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         # 标题栏/手柄/缩放柄只在固定态需要
         self._header.setVisible(pinned)
         self._grip.setVisible(pinned)
         self._pin_btn.setText(t("ov.unpin") if pinned else t("ov.pin"))
+        self._refresh_ct_btn()
         self._floating_grip._style_refresh()
-        if self.isVisible():
-            hwnd = int(self.winId())
-            _set_click_through(hwnd, not pinned)
         self._sync_grip_visibility()
         self._floating_grip.place()
+
+    def _refresh_ct_btn(self) -> None:
+        """刷新标题栏「穿透」按钮文案/配色（与设置保持一致）。"""
+        on = not self.pinned()
+        c = palette(self.ctx.settings.theme)
+        self._ct_btn.setText(t("ov.click_through.on") if on else t("ov.click_through.off"))
+        self._ct_btn.setStyleSheet(
+            f"background:transparent;border:none;color:{c['accent'] if on else c['muted']};"
+            f"font-size:12px;font-weight:{'700' if on else '400'};"
+        )
+
+    # ---------------------------------------------------------- 穿透命中测试
+    def _interactive_rects(self) -> list[QRect]:
+        """穿透态下仍然接收鼠标的区域：译文滚动区 + 回话输入条。
+
+        其余区域（标题栏、边距、提示条…）继续穿透给下面的游戏。
+        """
+        rects: list[QRect] = []
+        for w in (self._scroll, self._reply_panel):
+            if w is None or not w.isVisibleTo(self):
+                continue
+            rects.append(QRect(w.mapTo(self, QPoint(0, 0)), w.size()))
+        return rects
+
+    def is_interactive_point(self, pos: QPoint) -> bool:
+        """浮窗本地坐标 ``pos`` 是否该归浮窗处理（False = 穿透给下面的窗口）。"""
+        if self.pinned():
+            return True
+        return any(r.contains(pos) for r in self._interactive_rects())
+
+    def nativeEvent(self, eventType, message):  # noqa: N802 (Qt 命名)
+        """穿透态下自己回答 WM_NCHITTEST，实现**逐区域**穿透（仅 Windows）。
+
+        用户实测旧行为的问题：整窗穿透时"回话功能失效、无法滚动"。
+        现在可交互区域正常接收鼠标，其余区域返回 HTTRANSPARENT，
+        让下面的游戏照常拿到点击与滚轮。
+        """
+        if self.isVisible() and not self.pinned():
+            try:
+                if eventType in (b"windows_generic_MSG", "windows_generic_MSG"):
+                    msg = wintypes.MSG.from_address(int(message))
+                    if msg.message == WM_NCHITTEST:
+                        x = ctypes.c_short(msg.lParam & 0xFFFF).value
+                        y = ctypes.c_short((msg.lParam >> 16) & 0xFFFF).value
+                        if not self.is_interactive_point(self.mapFromGlobal(QPoint(x, y))):
+                            return True, HTTRANSPARENT
+            except Exception as exc:  # noqa: BLE001
+                log.debug("穿透命中测试跳过: %s", exc)
+        return super().nativeEvent(eventType, message)
 
     def _sync_grip_visibility(self) -> None:
         show_grip = self.isVisible() and not self.pinned() and not self._user_hidden
@@ -422,6 +479,7 @@ class OverlayWindow(QWidget):
         """切换界面语言后刷新悬浮框内文案（问答记录一并重建以刷新按钮文案）。"""
         self._title.setText(t("ov.title"))
         self._spicy_btn.setToolTip(t("ov.spicy.tip"))
+        self._ct_btn.setToolTip(t("ovc.click_through.tip"))
         self._pin_btn.setToolTip(t("ov.pin.tip"))
         self._btn_hide.setToolTip(t("ov.hide.tip"))
         self._reply_input.setPlaceholderText(t("ov.reply.ph"))
@@ -456,12 +514,15 @@ class OverlayWindow(QWidget):
         self.hide()
         self.visible_changed.emit(False)
 
-    def set_reply_enabled(self, on: bool, notify_main: bool = True) -> None:
-        """显示/隐藏回话输入条（受 settings.reply_enabled 控制）。"""
+    def set_reply_enabled(self, on: bool) -> None:
+        """显示/隐藏回话输入条（受 settings.reply_enabled 控制）。
+
+        **不再**在这里强制切回固定态：旧实现是"回话条一开就固定"，于是用户在
+        主窗口勾上「鼠标穿透」（或点浮窗的穿透/取消固定按钮）后，同步路径又会
+        调用本函数把它立刻改回去——表现为"穿透开关点了等于没点"（真机复核抓到）。
+        现在穿透态下回话条本身就归浮窗处理（见 nativeEvent），输入不受影响。
+        """
         self._reply_panel.setVisible(on)
-        if on and not self.pinned():
-            # 回话需要键盘输入，自动切到固定态（notify_main=False 避免与主窗口互相回调）
-            self.set_pinned(True, notify_main=notify_main)
 
     # ---------------------------------------------------------- 数据
     def push_lines(self, rows: list[dict]) -> None:
@@ -489,10 +550,21 @@ class OverlayWindow(QWidget):
             self._update_row(row, d, s)
         self._evict_over_max()
         self._update_count()
-        if self._auto_scroll:
-            sb = self._scroll.verticalScrollBar()
-            QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
+        # 有新结果就把视图带回最新一行（按需翻译：用户按一次热键就想看最新那几条）
+        self._auto_scroll = True
+        self._scroll_to_bottom()
         self._bump_idle()
+
+    def _scroll_to_bottom(self) -> None:
+        """把译文列表滚到最底部（立即一次 + 布局完成后再补一次）。"""
+        sb = self._scroll.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        QTimer.singleShot(0, lambda: sb.setValue(sb.maximum()))
+
+    def _on_scroll_range_changed(self, _minimum: int, maximum: int) -> None:
+        """滚动范围变化（新行布局完成）时贴底——修掉"差一屏"的老毛病。"""
+        if self._auto_scroll:
+            self._scroll.verticalScrollBar().setValue(maximum)
 
     def _evict_over_max(self) -> None:
         """超过 settings.max_entries 时淘汰最早的行（dict 保序 = 插入顺序）。"""
@@ -545,10 +617,11 @@ class OverlayWindow(QWidget):
         c = palette(s.theme)
         orig_color, trans_color, pend_color = c["muted"], c["text"], c["warn"]
         if pending:
-            body = (
-                f'<span style="color:{pend_color}">{t("ov.pending")}</span>'
-                + (f'<br/><span style="color:{orig_color}">{html.escape(text)}</span>' if s.show_original else "")
-            )
+            # 「识别中」行必须**总是**带上原文：它是"先出原文、译文稍后替换"的分阶段反馈，
+            # 若跟随「显示原文」开关隐藏，这一行就只剩"识别中…"，对用户毫无信息。
+            body = f'<span style="color:{pend_color}">{t("ov.pending")}</span>'
+            if text:
+                body += f'<br/><span style="color:{orig_color}">{html.escape(text)}</span>'
         else:
             shown = translated or text
             body = f'<span style="color:{trans_color}">{html.escape(shown)}</span>'

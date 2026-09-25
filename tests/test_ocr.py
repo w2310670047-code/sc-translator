@@ -71,3 +71,39 @@ def test_low_contrast_enhancement_kicks_in():
     high[:] = (10, 10, 10)
     high[20:50, 20:200] = (230, 230, 230)
     assert _enhance_low_contrast(high) is None
+
+
+# ---------------------------------------------------------------- 提速（第 21 轮）
+def test_default_params_use_smaller_det_limit_and_single_thread():
+    """默认检测尺寸 512（而非 RapidOCR 的 736）：默认会把短边放大到 736，实测多花 ~40%。"""
+    from sc_translator.ocr import DET_LIMIT_SIDE_LEN
+
+    kw = OcrEngine()._kwargs
+    assert DET_LIMIT_SIDE_LEN == 512
+    assert kw["det_limit_side_len"] == 512
+    assert kw["intra_op_num_threads"] == 1, "单线程省 CPU 是刻意选择，别被顺手改掉"
+
+
+def test_same_frame_skips_ocr_engine():
+    """同一帧连续按热键时直接复用上次结果（哈希 ~0.2ms vs OCR 400ms+）。"""
+    calls: list[tuple] = []
+
+    class _Engine:
+        def __call__(self, img):
+            calls.append(img.shape)
+            box = [[0, 0], [200, 0], [200, 20], [0, 20]]
+            return ([[box, "Quantum travel to Crusader", 0.99]], 0.01)
+
+    eng = OcrEngine()
+    eng._engine = _Engine()
+    img = np.full((60, 320, 3), 20, dtype=np.uint8)
+    first = eng.recognize(img)
+    second = eng.recognize(img.copy())            # 像素完全相同 = 同一画面
+    assert [r.text for r in first] == ["Quantum travel to Crusader"], first
+    assert [r.text for r in second] == [r.text for r in first]
+    assert len(calls) == 1, f"同帧不该再跑引擎：{calls}"
+
+    changed = img.copy()
+    changed[0, 0] = (255, 0, 0)                   # 画面变了必须重新识别
+    eng.recognize(changed)
+    assert len(calls) == 2, calls
